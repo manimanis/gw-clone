@@ -464,19 +464,15 @@ export class GWBasicInterpreter {
         if (item === ';') {
           // No space, continue on same line
         } else if (item === ',') {
-          // Tab to next 14-column zone
+          // Tab to next 8-column zone
           const currentLen = output.length;
-          const nextZone = Math.ceil((currentLen + 1) / 14) * 14;
+          const nextZone = Math.ceil((currentLen + 1) / 8) * 8;
           output += ' '.repeat(nextZone - currentLen);
         }
       } else {
         const val = this.evalExpr(item);
         if (typeof val === 'number') {
-          if (Number.isInteger(val)) {
-            output += ' ' + val + ' ';
-          } else {
-            output += ' ' + val + ' ';
-          }
+          output += val;
         } else {
           output += this.toString(val);
         }
