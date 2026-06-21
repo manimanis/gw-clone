@@ -31,6 +31,8 @@ export const TokenType = {
   MKDATE_FUNC: 118, YEAR_FUNC: 119, MONTH_FUNC: 120, DAY_FUNC: 121,
   DAYW_FUNC: 122, HOUR_FUNC: 123, MINUTE_FUNC: 124, SECONDS_FUNC: 125,
   DATESTR_DOLLAR: 126, TODATE_FUNC: 127,
+  // Non standard function
+  ATAN2_FUNC: 128, HYPO_FUNC: 129,
   // Operators
   Plus: 99, Minus: 100, Star: 101, Slash: 102, BackSlash: 103, Caret: 104,
   Eq: 105, Ne: 106, Lt: 107, Gt: 108, Le: 109, Ge: 110,

@@ -300,6 +300,8 @@ export class Parser {
       TokenType.MKDATE_FUNC, TokenType.YEAR_FUNC, TokenType.MONTH_FUNC, TokenType.DAY_FUNC,
       TokenType.DAYW_FUNC, TokenType.HOUR_FUNC, TokenType.MINUTE_FUNC, TokenType.SECONDS_FUNC,
       TokenType.DATESTR_DOLLAR, TokenType.TODATE_FUNC,
+      // non standard functions
+      TokenType.ATAN2_FUNC, TokenType.HYPO_FUNC,
     ];
 
     if (funcTypes.includes(token.type)) {

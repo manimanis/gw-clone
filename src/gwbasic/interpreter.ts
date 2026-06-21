@@ -53,48 +53,104 @@ export class GWBasicInterpreter {
     this.lastRandom = Math.random();
   }
 
+  private verifyLineNumbers(lines: string[]) {
+    // Vérifier l'unicité des numéros de ligne dans l'ordre du source
+    const seenLineNumbers = new Set<number>();
+    let curLine = 1;
+    for (const line of lines) {
+      const match = line.match(/^\s*(\d+)\s+(.*)$/);
+      if (match) {
+        const lineNum = parseInt(match[1]);
+        if (seenLineNumbers.has(lineNum)) {
+          throw new Error(`Duplicate line number ${lineNum} at line ${curLine}`);
+        }
+        seenLineNumbers.add(lineNum);
+        this.sourceLines.set(lineNum, match[2]);
+      }
+      curLine++;
+    }
+  }
+
   // Load a program from source text
   loadProgram(source: string): void {
     this.sourceLines.clear();
     const lines = source.split('\n');
-    for (const line of lines) {
-      const match = line.match(/^\s*(\d+)\s+(.*)$/);
+
+    this.verifyLineNumbers(lines);
+
+    try {
+      const lexer = new Lexer(source);
+      const tokens = lexer.tokenize();
+      const parser = new Parser(tokens);
+      const flatAst = parser.parseProgram();
+
+      let currentLineNum: number | undefined = undefined;
+
+      // Reconstruire program et flatProgram
+      this.program = new Map();
+      currentLineNum = undefined;
+      let currentStmts: Statement[] = [];
+
+      for (const stmt of flatAst) {
+        const lineNum = (stmt as any).line;
+        if (lineNum !== undefined) {
+          if (lineNum !== currentLineNum) {
+            if (currentLineNum !== undefined) {
+              this.program.set(currentLineNum, currentStmts);
+            }
+            currentLineNum = lineNum;
+            currentStmts = [stmt];
+          } else {
+            currentStmts.push(stmt);
+          }
+        }
+      }
+      if (currentLineNum !== undefined) {
+        this.program.set(currentLineNum, currentStmts);
+      }
+
+      this.flatProgram = flatAst;
+      this.lineNumbers = Array.from(this.program.keys()).sort((a, b) => a - b);
+
+      // If no line numbers found but source has content, treat as a single direct line
+      if (this.lineNumbers.length === 0 && source.trim()) {
+        const lexer2 = new Lexer(source);
+        const tokens2 = lexer2.tokenize();
+        const parser2 = new Parser(tokens2);
+        const stmts = parser2.parseLineStatements();
+        if (stmts.length > 0) {
+          this.program.set(10, stmts);
+          this.lineNumbers = [10];
+          this.sourceLines.set(10, source.trim());
+          this.flatProgram = stmts;
+        }
+      }
+
+      this.collectData();
+    } catch (e: unknown) {
+      const err = e as Error;
+      // Convertir les numéros de ligne physique en numéros de ligne GW-BASIC
+      const match = err.message.match(/^(Unterminated string|Expected .+) at line (\d+)$/);
       if (match) {
-        this.sourceLines.set(parseInt(match[1]), match[2]);
+        const physLine = parseInt(match[2]);
+        // Chercher le numéro de ligne GW-BASIC correspondant à la ligne physique
+        const lines = source.split('\n');
+        if (physLine >= 1 && physLine <= lines.length) {
+          const gwLineMatch = lines[physLine - 1].match(/^\s*(\d+)/);
+          if (gwLineMatch) {
+            throw new Error(`${match[1]} at line ${gwLineMatch[1]}`);
+          }
+        }
+        throw err;
       }
-    }
-
-    const lexer = new Lexer(source);
-    const tokens = lexer.tokenize();
-    const parser = new Parser(tokens);
-    const flatAst = parser.parseProgram();
-    this.flatProgram = flatAst;
-    // Convert flat array back to Map<number, Statement[]> for internal use
-    this.program = new Map();
-    for (const stmt of flatAst) {
-      const lineNum = (stmt as any).line;
-      if (lineNum !== undefined) {
-        const existing = this.program.get(lineNum) || [];
-        existing.push(stmt);
-        this.program.set(lineNum, existing);
+      if (err.message.startsWith('Unterminated string') ||
+          err.message.startsWith('Duplicate line number') ||
+          err.message.startsWith('Syntax error') ||
+          err.message.startsWith('Expected')) {
+        throw err;
       }
+      throw new Error(`Syntax error: ${err.message}`);
     }
-    this.lineNumbers = Array.from(this.program.keys()).sort((a, b) => a - b);
-
-    // If no line numbers found but source has content, treat as a single direct line
-    if (this.lineNumbers.length === 0 && source.trim()) {
-      const lexer2 = new Lexer(source);
-      const tokens2 = lexer2.tokenize();
-      const parser2 = new Parser(tokens2);
-      const stmts = parser2.parseLineStatements();
-      if (stmts.length > 0) {
-        this.program.set(10, stmts);
-        this.lineNumbers = [10];
-        this.sourceLines.set(10, source.trim());
-      }
-    }
-
-    this.collectData();
   }
 
   // Collect all DATA values
@@ -116,21 +172,26 @@ export class GWBasicInterpreter {
 
   // Run the program
   async run(source?: string): Promise<void> {
-    if (source) {
-      this.loadProgram(source);
-    }
-
-    this.reset();
-    this.running = true;
-    this.stopped = false;
-    this.pc = 0;
-
     try {
+      if (source) {
+        this.loadProgram(source);
+      }
+
+      this.reset();
+      this.running = true;
+      this.stopped = false;
+      this.pc = 0;
+
       await this.executeProgram();
     } catch (e: unknown) {
       const err = e as Error;
       if (err.message !== 'PROGRAM_ENDED' && err.message !== 'PROGRAM_STOPPED') {
-        this.output({ type: 'error', value: `Error: ${err.message} at line ${this.currentLineNum}` });
+        // Si l'erreur contient déjà "at line" (ex: du lexer), ne pas ajouter le suffixe
+        const errMsg = err.message.includes(' at line ')
+          ? `Error: ${err.message}`
+          : `Error: ${err.message} at line ${this.currentLineNum}`;
+        this.output({ type: 'error', value: errMsg });
+        throw new Error(errMsg);
       }
     } finally {
       this.running = false;
@@ -296,11 +357,29 @@ export class GWBasicInterpreter {
     }
   }
 
+  getVariables() {
+    return this.variables;
+  }
+
   private getVariable(ref: VariableRef): unknown {
     if (ref.indices.length > 0) {
+      // Si le nom se termine par $ et n'est PAS un tableau DIM, c'est un accès caractère
+      if (ref.name.endsWith('$') && !this.arrays.has(ref.name)) {
+        return this.getStringChar(ref.name, ref.indices);
+      }
       return this.getArrayElement(ref.name, ref.indices);
     }
     return this.variables.get(ref.name) ?? 0;
+  }
+
+  // Accéder au caractère d'indice ind (1-indexé) dans une chaîne
+  private getStringChar(name: string, indexExprs: Expression[]): string {
+    const str = this.toString(this.variables.get(name) ?? '');
+    const index = Math.floor(this.toNumber(this.evalExpr(indexExprs[0])));
+    if (index < 1 || index > str.length) {
+      throw new Error(`String index out of range: ${index} (valid: 1-${str.length})`);
+    }
+    return str[index - 1];
   }
 
   private getArrayElement(name: string, indexExprs: Expression[]): unknown {
@@ -429,6 +508,8 @@ export class GWBasicInterpreter {
       case 'COS': return Math.cos(this.toNumber(args[0]));
       case 'TAN': return Math.tan(this.toNumber(args[0]));
       case 'ATN': return Math.atan(this.toNumber(args[0]));
+      case 'ATAN2': return Math.atan2(this.toNumber(args[1]), this.toNumber(args[0]));
+      case 'HYPO': return Math.hypot(this.toNumber(args[0]), this.toNumber(args[1]));
       case 'LOG': return Math.log(this.toNumber(args[0]));
       case 'EXP': return Math.exp(this.toNumber(args[0]));
       case 'SGN': {
@@ -631,10 +712,27 @@ export class GWBasicInterpreter {
     const value = this.evalExpr(stmt.value);
 
     if (stmt.indices.length > 0) {
-      this.setArrayElement(stmt.name, stmt.indices, value);
+      // Si le nom se termine par $ et n'est PAS un tableau DIM, c'est un accès caractère
+      if (stmt.name.endsWith('$') && !this.arrays.has(stmt.name)) {
+        this.setStringChar(stmt.name, stmt.indices, value);
+      } else {
+        this.setArrayElement(stmt.name, stmt.indices, value);
+      }
     } else {
       this.variables.set(stmt.name, value);
     }
+  }
+
+  // Affecter un caractère à une position dans une chaîne
+  private setStringChar(name: string, indexExprs: Expression[], value: unknown): void {
+    const str = this.toString(this.variables.get(name) ?? '');
+    const index = Math.floor(this.toNumber(this.evalExpr(indexExprs[0])));
+    if (index < 1 || index > str.length) {
+      throw new Error(`String index out of range: ${index} (valid: 1-${str.length})`);
+    }
+    const char = this.toString(value).charAt(0);
+    const newStr = str.substring(0, index - 1) + char + str.substring(index);
+    this.variables.set(name, newStr);
   }
 
   private async execIf(stmt: IfStatement): Promise<void> {
@@ -1082,24 +1180,78 @@ export class GWBasicInterpreter {
     // Try to execute as a statement
     try {
       const lexer = new Lexer(source);
-      const tokens = lexer.tokenize();
-      const parser = new Parser(tokens);
-      const flatAst = parser.parseProgram();
+      let flatAst: Statement[];
+
+      try {
+        const tokens = lexer.tokenize();
+        const parser = new Parser(tokens);
+        flatAst = parser.parseProgram();
+      } catch (e: unknown) {
+        const err = e as Error;
+        if (err.message.startsWith('Unterminated string') ||
+            err.message.startsWith('Expected')) {
+          throw err;
+        }
+        throw new Error(`Syntax error: ${err.message}`);
+      }
 
       if (flatAst.length > 0 && (flatAst[0] as any).line !== undefined) {
         // It was a numbered line - add to program
+        // Vérifier l'unicité des numéros de ligne
+        const seenLineNumbers = new Set<number>();
+        let currentLineNum: number | undefined = undefined;
+
         for (const stmt of flatAst) {
           const lineNum = (stmt as any).line;
           if (lineNum !== undefined) {
-            const existing = this.program.get(lineNum) || [];
-            existing.push(stmt);
-            this.program.set(lineNum, existing);
-            const match = source.trim().match(/^\d+\s+(.*)$/);
-            if (match) {
-              this.sourceLines.set(lineNum, match[1]);
+            if (lineNum !== currentLineNum) {
+              if (seenLineNumbers.has(lineNum)) {
+                throw new Error(`Duplicate line number ${lineNum}`);
+              }
+              // Vérifier aussi que le numéro n'existe pas déjà dans le programme chargé
+              if (this.program.has(lineNum)) {
+                throw new Error(`Duplicate line number ${lineNum}`);
+              }
+              seenLineNumbers.add(lineNum);
+              currentLineNum = lineNum;
             }
           }
         }
+
+        // Ajouter les nouvelles lignes dans program
+        currentLineNum = undefined;
+        let currentStmts: Statement[] = [];
+
+        for (const stmt of flatAst) {
+          const lineNum = (stmt as any).line;
+          if (lineNum !== undefined) {
+            if (lineNum !== currentLineNum) {
+              if (currentLineNum !== undefined) {
+                this.program.set(currentLineNum, currentStmts);
+              }
+              currentLineNum = lineNum;
+              currentStmts = [stmt];
+            } else {
+              currentStmts.push(stmt);
+            }
+          }
+        }
+        if (currentLineNum !== undefined) {
+          this.program.set(currentLineNum, currentStmts);
+          const match = source.trim().match(/^\d+\s+(.*)$/);
+          if (match) {
+            this.sourceLines.set(currentLineNum, match[1]);
+          }
+        }
+
+        // Reconstruire flatProgram
+        this.flatProgram = [];
+        for (const [, stmts] of this.program) {
+          for (const stmt of stmts) {
+            this.flatProgram.push(stmt);
+          }
+        }
+
         this.lineNumbers = Array.from(this.program.keys()).sort((a, b) => a - b);
         this.collectData();
       } else {

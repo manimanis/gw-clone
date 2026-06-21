@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { GWBasicInterpreter } from '../interpreter';
 
 describe('Lissajou Program', () => {
-    let outputs: any[];
+  let outputs: any[];
   let interpreter: GWBasicInterpreter;
 
   beforeEach(() => {

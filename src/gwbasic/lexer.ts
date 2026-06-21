@@ -113,6 +113,9 @@ const KEYWORDS: Record<string, TokenType> = {
   'SECONDS': TokenType.SECONDS_FUNC,
   'DATESTR$': TokenType.DATESTR_DOLLAR,
   'TODATE': TokenType.TODATE_FUNC,
+  // Non standard
+  'ATAN2': TokenType.ATAN2_FUNC,
+  'HYPO': TokenType.HYPO_FUNC,
 };
 
 export class Lexer {
@@ -305,16 +308,16 @@ export class Lexer {
     let value = '';
 
     while (this.pos < this.source.length && this.source[this.pos] !== '"') {
-      if (this.source[this.pos] === '\n') {
-        // Unterminated string
-        break;
+      if (this.source[this.pos] === '\n' || this.source[this.pos] === '\r') {
+        // Unterminated string - do NOT consume the newline; leave it for normal Eol processing
+        throw new Error(`Unterminated string at line ${startLine}`);
       }
       value += this.source[this.pos];
       this.pos++;
       this.col++;
     }
 
-    if (this.pos < this.source.length) {
+    if (this.pos < this.source.length && this.source[this.pos] === '"') {
       this.pos++; // skip closing quote
       this.col++;
     }
