@@ -296,6 +296,10 @@ export class Parser {
       TokenType.SIN_FUNC, TokenType.COS_FUNC, TokenType.TAN_FUNC, TokenType.ATN_FUNC,
       TokenType.LOG_FUNC, TokenType.EXP_FUNC, TokenType.SGN_FUNC, TokenType.FIX_FUNC,
       TokenType.PEEK_FUNC, TokenType.INKEY,
+      // Date functions
+      TokenType.MKDATE_FUNC, TokenType.YEAR_FUNC, TokenType.MONTH_FUNC, TokenType.DAY_FUNC,
+      TokenType.DAYW_FUNC, TokenType.HOUR_FUNC, TokenType.MINUTE_FUNC, TokenType.SECONDS_FUNC,
+      TokenType.DATESTR_DOLLAR, TokenType.TODATE_FUNC,
     ];
 
     if (funcTypes.includes(token.type)) {

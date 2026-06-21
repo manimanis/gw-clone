@@ -41,6 +41,8 @@ export class GWBasicInterpreter {
   private lastRandom: number = 0;
   private startTime: number = Date.now();
   private sourceLines: Map<number, string> = new Map();
+  private currentLineNum: number = 0;
+  private currentColNum: number = 0;
 
   private outputCallback: OutputCallback;
   private inputCallback: InputCallback;
@@ -128,7 +130,7 @@ export class GWBasicInterpreter {
     } catch (e: unknown) {
       const err = e as Error;
       if (err.message !== 'PROGRAM_ENDED' && err.message !== 'PROGRAM_STOPPED') {
-        this.output({ type: 'error', value: `Error: ${err.message}` });
+        this.output({ type: 'error', value: `Error: ${err.message} at line ${this.currentLineNum}` });
       }
     } finally {
       this.running = false;
@@ -154,7 +156,7 @@ export class GWBasicInterpreter {
     } catch (e: unknown) {
       const err = e as Error;
       if (err.message !== 'PROGRAM_ENDED' && err.message !== 'PROGRAM_STOPPED') {
-        this.output({ type: 'error', value: `Error: ${err.message}` });
+        this.output({ type: 'error', value: `Error: ${err.message} at line ${this.currentLineNum}` });
       }
     } finally {
       this.running = false;
@@ -202,11 +204,13 @@ export class GWBasicInterpreter {
 
     while (this.running && this.pc < this.flatProgram.length) {
       if (iterations++ > maxIterations) {
-        this.output({ type: 'error', value: 'Error: Maximum iterations exceeded (possible infinite loop)' });
+        this.output({ type: 'error', value: 'Error: Maximum iterations exceeded (possible infinite loop) at line ' + this.currentLineNum });
         break;
       }
 
       const stmt = this.flatProgram[this.pc];
+      this.currentLineNum = (stmt as any).line || 0;
+      this.currentColNum = (stmt as any).col || 0;
 
       // Track the pc before executing the statement
       // so we can detect if it was modified by a jump (GOTO, WHILE/WEND, etc.)
@@ -230,6 +234,14 @@ export class GWBasicInterpreter {
   // Execute a single statement
   private async executeStatement(stmt: Statement): Promise<void> {
     if (!this.running) return;
+
+    // Update current position tracking from statement metadata
+    if ((stmt as any).line !== undefined) {
+      this.currentLineNum = (stmt as any).line;
+    }
+    if ((stmt as any).col !== undefined) {
+      this.currentColNum = (stmt as any).col;
+    }
 
     switch (stmt.type) {
       case 'Print': await this.execPrint(stmt as PrintStatement); break;
@@ -490,6 +502,71 @@ export class GWBasicInterpreter {
       case 'INKEY$': return ''; // No key input in browser
       case 'PEEK': return 0; // No memory in browser
       case 'TIMER': return (Date.now() - this.startTime) / 1000;
+      // Date functions
+      case 'MKDATE': {
+        const now = new Date();
+        if (args.length === 0) return Math.floor(now.getTime() / 1000);
+        const year = args.length >= 1 ? this.toNumber(args[0]) : now.getFullYear();
+        const month = args.length >= 2 ? this.toNumber(args[1]) : (now.getMonth() + 1);
+        const day = args.length >= 3 ? this.toNumber(args[2]) : now.getDate();
+        const hour = args.length >= 4 ? this.toNumber(args[3]) : now.getHours();
+        const minute = args.length >= 5 ? this.toNumber(args[4]) : now.getMinutes();
+        const second = args.length >= 6 ? this.toNumber(args[5]) : now.getSeconds();
+        return Math.floor(new Date(year, month - 1, day, hour, minute, second).getTime() / 1000);
+      }
+      case 'YEAR': {
+        const d = new Date(this.toNumber(args[0]) * 1000);
+        return d.getFullYear();
+      }
+      case 'MONTH': {
+        const d = new Date(this.toNumber(args[0]) * 1000);
+        return d.getMonth() + 1;
+      }
+      case 'DAY': {
+        const d = new Date(this.toNumber(args[0]) * 1000);
+        return d.getDate();
+      }
+      case 'DAYW': {
+        const d = new Date(this.toNumber(args[0]) * 1000);
+        return d.getDay();
+      }
+      case 'HOUR': {
+        const d = new Date(this.toNumber(args[0]) * 1000);
+        return d.getHours();
+      }
+      case 'MINUTE': {
+        const d = new Date(this.toNumber(args[0]) * 1000);
+        return d.getMinutes();
+      }
+      case 'SECONDS': {
+        const d = new Date(this.toNumber(args[0]) * 1000);
+        return d.getSeconds();
+      }
+      case 'DATESTR$': {
+        const d = new Date(this.toNumber(args[0]) * 1000);
+        const y = d.getFullYear();
+        const mo = String(d.getMonth() + 1).padStart(2, '0');
+        const da = String(d.getDate()).padStart(2, '0');
+        const h = String(d.getHours()).padStart(2, '0');
+        const mi = String(d.getMinutes()).padStart(2, '0');
+        const s = String(d.getSeconds()).padStart(2, '0');
+        return `${y}-${mo}-${da} ${h}:${mi}:${s}`;
+      }
+      case 'TODATE': {
+        const str = this.toString(args[0]);
+        const match = str.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/);
+        if (!match) {
+          this.output({ type: 'error', value: 'ERROR: Invalid date format\n' });
+          return 0;
+        }
+        const year = parseInt(match[1]);
+        const month = parseInt(match[2]);
+        const day = parseInt(match[3]);
+        const hour = parseInt(match[4]);
+        const minute = parseInt(match[5]);
+        const second = parseInt(match[6]);
+        return Math.floor(new Date(year, month - 1, day, hour, minute, second).getTime() / 1000);
+      }
       default: return 0;
     }
   }
@@ -1041,7 +1118,8 @@ export class GWBasicInterpreter {
         }
       }
     } catch (e: unknown) {
-      this.output({ type: 'error', value: `${(e as Error).message}\n` });
+      const err = e as Error;
+      this.output({ type: 'error', value: `Error: ${err.message} at line ${this.currentLineNum}\n` });
     }
   }
 

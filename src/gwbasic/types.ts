@@ -27,6 +27,10 @@ export const TokenType = {
   SIN_FUNC: 89, COS_FUNC: 90, TAN_FUNC: 91, ATN_FUNC: 92,
   LOG_FUNC: 93, EXP_FUNC: 94, SGN_FUNC: 95, FIX_FUNC: 96,
   PEEK_FUNC: 97, POKE: 98,
+  // Date functions
+  MKDATE_FUNC: 118, YEAR_FUNC: 119, MONTH_FUNC: 120, DAY_FUNC: 121,
+  DAYW_FUNC: 122, HOUR_FUNC: 123, MINUTE_FUNC: 124, SECONDS_FUNC: 125,
+  DATESTR_DOLLAR: 126, TODATE_FUNC: 127,
   // Operators
   Plus: 99, Minus: 100, Star: 101, Slash: 102, BackSlash: 103, Caret: 104,
   Eq: 105, Ne: 106, Lt: 107, Gt: 108, Le: 109, Ge: 110,

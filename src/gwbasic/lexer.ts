@@ -102,6 +102,17 @@ const KEYWORDS: Record<string, TokenType> = {
   'FIX': TokenType.FIX_FUNC,
   'PEEK': TokenType.PEEK_FUNC,
   'POKE': TokenType.POKE,
+  // Date functions
+  'MKDATE': TokenType.MKDATE_FUNC,
+  'YEAR': TokenType.YEAR_FUNC,
+  'MONTH': TokenType.MONTH_FUNC,
+  'DAY': TokenType.DAY_FUNC,
+  'DAYW': TokenType.DAYW_FUNC,
+  'HOUR': TokenType.HOUR_FUNC,
+  'MINUTE': TokenType.MINUTE_FUNC,
+  'SECONDS': TokenType.SECONDS_FUNC,
+  'DATESTR$': TokenType.DATESTR_DOLLAR,
+  'TODATE': TokenType.TODATE_FUNC,
 };
 
 export class Lexer {
