@@ -9,8 +9,8 @@ import type {
   StopStatement, SwapStatement, RandomizeStatement, ColorStatement, LocateStatement,
   ScreenStatement, PsetStatement, LineStatement, CircleStatement, DrawStatement,
   PaintStatement, BeepStatement, SoundStatement, PokeStatement,
-  OnGotoStatement, OnGosubStatement,
-  InterpreterOutput, GraphicsCommand,
+  OnGotoStatement, OnGosubStatement, MidAssignStatement,
+  InterpreterOutput, GraphicsCommand, ASTNode,
 } from './types';
 import { Lexer } from './lexer';
 import { Parser } from './parser';
@@ -22,19 +22,20 @@ export class GWBasicInterpreter {
   private variables: Map<string, unknown> = new Map();
   private arrays: Map<string, { dimensions: number[]; data: unknown[] }> = new Map();
   private program: Map<number, Statement[]> = new Map();
+  private flatProgram: Statement[] = [];
   private lineNumbers: number[] = [];
   private dataPointer: number = 0;
   private dataValues: (number | string)[] = [];
-  private forStack: { variable: string; endValue: number; step: number; lineIndex: number }[] = [];
-  private gosubStack: { lineIndex: number }[] = [];
-  private whileStack: { lineIndex: number }[] = [];
+  private forStack: { variable: string; endValue: number; step: number; pc: number }[] = [];
+  private gosubStack: { pc: number }[] = [];
+  private whileStack: { pc: number }[] = [];
   private selectStack: { value: unknown; matched: boolean }[] = [];
   private running: boolean = false;
   private stopped: boolean = false;
-  private currentLineIndex: number = 0;
+  private pc: number = 0;
   private screenMode: number = 0;
   private foregroundColor: number = 7;
-  private backgroundColor: number = 0;
+  private backgroundColor: number = -1;
   private cursorRow: number = 1;
   private cursorCol: number = 1;
   private lastRandom: number = 0;
@@ -64,8 +65,33 @@ export class GWBasicInterpreter {
     const lexer = new Lexer(source);
     const tokens = lexer.tokenize();
     const parser = new Parser(tokens);
-    this.program = parser.parseProgram();
+    const flatAst = parser.parseProgram();
+    this.flatProgram = flatAst;
+    // Convert flat array back to Map<number, Statement[]> for internal use
+    this.program = new Map();
+    for (const stmt of flatAst) {
+      const lineNum = (stmt as any).line;
+      if (lineNum !== undefined) {
+        const existing = this.program.get(lineNum) || [];
+        existing.push(stmt);
+        this.program.set(lineNum, existing);
+      }
+    }
     this.lineNumbers = Array.from(this.program.keys()).sort((a, b) => a - b);
+
+    // If no line numbers found but source has content, treat as a single direct line
+    if (this.lineNumbers.length === 0 && source.trim()) {
+      const lexer2 = new Lexer(source);
+      const tokens2 = lexer2.tokenize();
+      const parser2 = new Parser(tokens2);
+      const stmts = parser2.parseLineStatements();
+      if (stmts.length > 0) {
+        this.program.set(10, stmts);
+        this.lineNumbers = [10];
+        this.sourceLines.set(10, source.trim());
+      }
+    }
+
     this.collectData();
   }
 
@@ -95,7 +121,7 @@ export class GWBasicInterpreter {
     this.reset();
     this.running = true;
     this.stopped = false;
-    this.currentLineIndex = 0;
+    this.pc = 0;
 
     try {
       await this.executeProgram();
@@ -169,33 +195,34 @@ export class GWBasicInterpreter {
     return lines.join('\n');
   }
 
-  // Execute the program starting from current line
+  // Execute the program starting from current instruction
   private async executeProgram(): Promise<void> {
     const maxIterations = 5000000; // Safety limit
     let iterations = 0;
 
-    while (this.running && this.currentLineIndex < this.lineNumbers.length) {
+    while (this.running && this.pc < this.flatProgram.length) {
       if (iterations++ > maxIterations) {
         this.output({ type: 'error', value: 'Error: Maximum iterations exceeded (possible infinite loop)' });
         break;
       }
 
-      const lineNum = this.lineNumbers[this.currentLineIndex];
-      const stmts = this.program.get(lineNum);
+      const stmt = this.flatProgram[this.pc];
 
-      if (stmts) {
-        for (const stmt of stmts) {
-          if (!this.running) break;
-          await this.executeStatement(stmt);
-        }
-      }
+      // Track the pc before executing the statement
+      // so we can detect if it was modified by a jump (GOTO, WHILE/WEND, etc.)
+      const pcBefore = this.pc;
+      await this.executeStatement(stmt);
+      const pcAfter = this.pc;
 
-      if (this.running) {
-        this.currentLineIndex++;
+      // If the statement modified pc (e.g., GOTO, WEND looping back),
+      // we've already jumped, so continue from the new pc
+      if (pcAfter === pcBefore) {
+        // No jump, advance to next instruction
+        this.pc++;
       }
     }
 
-    if (this.running && this.currentLineIndex >= this.lineNumbers.length) {
+    if (this.running && this.pc >= this.flatProgram.length) {
       this.running = false;
     }
   }
@@ -240,6 +267,7 @@ export class GWBasicInterpreter {
       case 'Poke': break; // POKE - no-op in browser
       case 'OnGoto': this.execOnGoto(stmt as OnGotoStatement); break;
       case 'OnGosub': await this.execOnGosub(stmt as OnGosubStatement); break;
+      case 'MidAssign': this.execMidAssign(stmt as MidAssignStatement); break;
     }
   }
 
@@ -433,7 +461,20 @@ export class GWBasicInterpreter {
         const n = parseFloat(s);
         return isNaN(n) ? 0 : n;
       }
-      case 'STRING$': return this.toString(args[1] || ' ').repeat(Math.floor(this.toNumber(args[0])));
+      case 'STRING$': {
+        const n = Math.floor(this.toNumber(args[0]));
+        const secondArg = args[1];
+        let char: string;
+        if (typeof secondArg === 'string') {
+          // If string, use first character
+          char = secondArg.charAt(0) || ' ';
+        } else {
+          // If number, use as ASCII code
+          const charCode = Math.floor(this.toNumber(secondArg));
+          char = String.fromCharCode(charCode);
+        }
+        return char.repeat(n);
+      }
       case 'SPACE$': return ' '.repeat(Math.floor(this.toNumber(args[0])));
       case 'INSTR': {
         const haystack = this.toString(args.length > 2 ? args[1] : args[0]);
@@ -535,76 +576,94 @@ export class GWBasicInterpreter {
     }
   }
 
-  private execFor(stmt: ForStatement): void {
-    const startVal = this.toNumber(this.evalExpr(stmt.start));
-    const endVal = this.toNumber(this.evalExpr(stmt.end));
-    const stepVal = this.toNumber(this.evalExpr(stmt.step));
-
-    this.variables.set(stmt.variable, startVal);
-
-    // Check if loop should execute at all
-    if ((stepVal > 0 && startVal > endVal) || (stepVal < 0 && startVal < endVal)) {
-      // Skip to after NEXT
-      const nextIdx = this.findNextLine(stmt.variable);
-      if (nextIdx !== -1) {
-        this.currentLineIndex = nextIdx;
+  // Helper: find the pc of the first statement with the given line number
+  private findPcByLine(targetLine: number): number {
+    for (let i = 0; i < this.flatProgram.length; i++) {
+      const stmt = this.flatProgram[i];
+      if ((stmt as any).line === targetLine) {
+        return i;
       }
+    }
+    return -1;
+  }
+
+  private execFor(stmt: ForStatement): void {
+    let incrementVar = true;
+    if (this.forStack.length === 0 ||
+      this.forStack[this.forStack.length - 1].pc !== this.pc) {
+      this.variables.set(stmt.variable, this.toNumber(this.evalExpr(stmt.start)));
+      this.forStack.push({
+        variable: stmt.variable,
+        endValue: this.toNumber(this.evalExpr(stmt.end)),
+        step: this.toNumber(this.evalExpr(stmt.step)),
+        pc: this.pc,
+      });
+      incrementVar = false;
+    }
+    const { variable, endValue, step } = this.forStack[this.forStack.length - 1];
+    let curValue = this.variables.get(variable) as number;
+    if (incrementVar) {
+      curValue += step;
+      this.variables.set(variable, curValue);
+    }
+    if ((step > 0 && curValue > endValue) || (step < 0 && curValue < endValue)) {
+      // Loop finished
+      const nextPc = this.findNextPc(stmt.variable);
+      if (nextPc !== -1) {
+        this.pc = nextPc + 1;
+      }
+      this.forStack.pop();
       return;
     }
-
-    this.forStack.push({
-      variable: stmt.variable,
-      endValue: endVal,
-      step: stepVal,
-      lineIndex: this.currentLineIndex,
-    });
   }
 
   private execNext(stmt: NextStatement): void {
-    const varName = stmt.variable;
-
-    // Find matching FOR on stack
-    let forIdx = -1;
-    if (varName) {
-      for (let i = this.forStack.length - 1; i >= 0; i--) {
-        if (this.forStack[i].variable === varName) {
-          forIdx = i;
-          break;
-        }
-      }
-    } else {
-      forIdx = this.forStack.length - 1;
-    }
-
-    if (forIdx === -1) {
+    if (this.forStack.length === 0) {
       throw new Error('NEXT without FOR');
     }
+    const forInfo = this.forStack[this.forStack.length - 1];
+    this.pc = forInfo.pc;
 
-    const forInfo = this.forStack[forIdx];
-    let currentVal = this.toNumber(this.variables.get(forInfo.variable)) + forInfo.step;
-    this.variables.set(forInfo.variable, currentVal);
+    // const varName = stmt.variable;
 
-    if ((forInfo.step > 0 && currentVal <= forInfo.endValue) ||
-        (forInfo.step < 0 && currentVal >= forInfo.endValue)) {
-      // Loop continues - go back to line after FOR
-      this.currentLineIndex = forInfo.lineIndex;
-    } else {
-      // Loop done - pop from stack, continue after NEXT
-      this.forStack.splice(forIdx, 1);
-    }
+    // // Find matching FOR on stack
+    // let forIdx = -1;
+    // if (varName) {
+    //   for (let i = this.forStack.length - 1; i >= 0; i--) {
+    //     if (this.forStack[i].variable === varName) {
+    //       forIdx = i;
+    //       break;
+    //     }
+    //   }
+    // } else {
+    //   forIdx = this.forStack.length - 1;
+    // }
+
+    // if (forIdx === -1) {
+    //   throw new Error('NEXT without FOR');
+    // }
+
+    // const forInfo = this.forStack[forIdx];
+    // let currentVal = this.toNumber(this.variables.get(forInfo.variable)) + forInfo.step;
+    // this.variables.set(forInfo.variable, currentVal);
+
+    // if ((forInfo.step > 0 && currentVal <= forInfo.endValue) ||
+    //   (forInfo.step < 0 && currentVal >= forInfo.endValue)) {
+    //   // Loop continues - go back to statement after FOR
+    //   this.pc = forInfo.pc;
+    // } else {
+    //   // Loop done - pop from stack, continue after NEXT
+    //   this.forStack.splice(forIdx, 1);
+    // }
   }
 
-  private findNextLine(variable: string): number {
-    for (let i = this.currentLineIndex + 1; i < this.lineNumbers.length; i++) {
-      const stmts = this.program.get(this.lineNumbers[i]);
-      if (stmts) {
-        for (const s of stmts) {
-          if (s.type === 'Next') {
-            const next = s as NextStatement;
-            if (!next.variable || next.variable === variable) {
-              return i;
-            }
-          }
+  private findNextPc(variable: string): number {
+    for (let i = this.pc + 1; i < this.flatProgram.length; i++) {
+      const s = this.flatProgram[i];
+      if (s.type === 'Next') {
+        const next = s as NextStatement;
+        if (!next.variable || next.variable === variable) {
+          return i;
         }
       }
     }
@@ -612,20 +671,20 @@ export class GWBasicInterpreter {
   }
 
   private execGoto(stmt: GotoStatement): void {
-    const idx = this.lineNumbers.indexOf(stmt.line);
-    if (idx === -1) {
-      throw new Error(`Undefined line ${stmt.line}`);
+    const targetPc = this.findPcByLine(stmt.targetLine);
+    if (targetPc === -1) {
+      throw new Error(`Undefined line ${stmt.targetLine}`);
     }
-    this.currentLineIndex = idx - 1; // Will be incremented in the loop
+    this.pc = targetPc;
   }
 
   private execGosub(stmt: GosubStatement): void {
-    this.gosubStack.push({ lineIndex: this.currentLineIndex });
-    const idx = this.lineNumbers.indexOf(stmt.line);
-    if (idx === -1) {
-      throw new Error(`Undefined line ${stmt.line}`);
+    this.gosubStack.push({ pc: this.pc + 1 });
+    const targetPc = this.findPcByLine(stmt.targetLine);
+    if (targetPc === -1) {
+      throw new Error(`Undefined line ${stmt.targetLine}`);
     }
-    this.currentLineIndex = idx - 1;
+    this.pc = targetPc;
   }
 
   private execReturn(_stmt: ReturnStatement): void {
@@ -633,17 +692,21 @@ export class GWBasicInterpreter {
       throw new Error('RETURN without GOSUB');
     }
     const info = this.gosubStack.pop()!;
-    this.currentLineIndex = info.lineIndex;
+    this.pc = info.pc;
   }
 
   private execWhile(stmt: WhileStatement): void {
-    this.whileStack.push({ lineIndex: this.currentLineIndex });
+    if (this.whileStack.length == 0 ||
+      this.whileStack[this.whileStack.length - 1].pc !== this.pc) {
+      this.whileStack.push({ pc: this.pc });
+    }
+
     const condition = this.evalExpr(stmt.condition);
     if (!this.toBool(condition)) {
       // Skip to after WEND
-      const wendIdx = this.findWendLine();
-      if (wendIdx !== -1) {
-        this.currentLineIndex = wendIdx;
+      const wendPc = this.findWendPc();
+      if (wendPc !== -1) {
+        this.pc = wendPc + 1;
         this.whileStack.pop();
       }
     }
@@ -655,38 +718,18 @@ export class GWBasicInterpreter {
     }
     const whileInfo = this.whileStack[this.whileStack.length - 1];
 
-    // Re-evaluate the WHILE condition
-    const whileLine = this.lineNumbers[whileInfo.lineIndex];
-    const stmts = this.program.get(whileLine);
-    if (stmts) {
-      for (const s of stmts) {
-        if (s.type === 'While') {
-          const condition = this.evalExpr((s as WhileStatement).condition);
-          if (this.toBool(condition)) {
-            // Loop continues
-            this.currentLineIndex = whileInfo.lineIndex;
-          } else {
-            // Loop done
-            this.whileStack.pop();
-          }
-          return;
-        }
-      }
-    }
+    // Re-evaluate the WHILE condition by going back to WHILE statement
+    this.pc = whileInfo.pc;
   }
 
-  private findWendLine(): number {
+  private findWendPc(): number {
     let depth = 1;
-    for (let i = this.currentLineIndex + 1; i < this.lineNumbers.length; i++) {
-      const stmts = this.program.get(this.lineNumbers[i]);
-      if (stmts) {
-        for (const s of stmts) {
-          if (s.type === 'While') depth++;
-          if (s.type === 'Wend') {
-            depth--;
-            if (depth === 0) return i;
-          }
-        }
+    for (let i = this.pc + 1; i < this.flatProgram.length; i++) {
+      const s = this.flatProgram[i];
+      if (s.type === 'While') depth++;
+      if (s.type === 'Wend') {
+        depth--;
+        if (depth === 0) return i;
       }
     }
     return -1;
@@ -886,16 +929,38 @@ export class GWBasicInterpreter {
   private execOnGoto(stmt: OnGotoStatement): void {
     const val = Math.floor(this.toNumber(this.evalExpr(stmt.expression)));
     if (val >= 1 && val <= stmt.lines.length) {
-      const line = stmt.lines[val - 1];
-      this.execGoto({ type: 'Goto', line } as GotoStatement);
+      const targetLine = stmt.lines[val - 1];
+      this.execGoto({ type: 'Goto', targetLine } as GotoStatement);
     }
   }
 
   private async execOnGosub(stmt: OnGosubStatement): Promise<void> {
     const val = Math.floor(this.toNumber(this.evalExpr(stmt.expression)));
     if (val >= 1 && val <= stmt.lines.length) {
-      const line = stmt.lines[val - 1];
-      this.execGosub({ type: 'Gosub', line } as GosubStatement);
+      const targetLine = stmt.lines[val - 1];
+      this.execGosub({ type: 'Gosub', targetLine } as GosubStatement);
+    }
+  }
+
+  private execMidAssign(stmt: MidAssignStatement): void {
+    const currentStr = this.toString(this.getVariable({ type: 'VariableRef', name: stmt.variable, indices: stmt.indices } as any));
+    const pos = Math.floor(this.toNumber(this.evalExpr(stmt.position))) - 1; // BASIC is 1-indexed
+    const len = Math.floor(this.toNumber(this.evalExpr(stmt.length)));
+    const replacement = this.toString(this.evalExpr(stmt.value));
+
+    // Ensure pos is within bounds
+    const start = Math.max(0, Math.min(pos, currentStr.length));
+    const end = Math.min(currentStr.length, start + len);
+
+    // Build the new string: before + replacement + after
+    const before = currentStr.substring(0, start);
+    const after = currentStr.substring(end);
+    const newStr = before + replacement + after;
+
+    if (stmt.indices.length > 0) {
+      this.setArrayElement(stmt.variable, stmt.indices, newStr);
+    } else {
+      this.variables.set(stmt.variable, newStr);
     }
   }
 
@@ -942,15 +1007,20 @@ export class GWBasicInterpreter {
       const lexer = new Lexer(source);
       const tokens = lexer.tokenize();
       const parser = new Parser(tokens);
-      const program = parser.parseProgram();
+      const flatAst = parser.parseProgram();
 
-      if (program.size > 0) {
+      if (flatAst.length > 0 && (flatAst[0] as any).line !== undefined) {
         // It was a numbered line - add to program
-        for (const [lineNum, stmts] of program) {
-          this.program.set(lineNum, stmts);
-          const match = source.trim().match(/^\d+\s+(.*)$/);
-          if (match) {
-            this.sourceLines.set(lineNum, match[1]);
+        for (const stmt of flatAst) {
+          const lineNum = (stmt as any).line;
+          if (lineNum !== undefined) {
+            const existing = this.program.get(lineNum) || [];
+            existing.push(stmt);
+            this.program.set(lineNum, existing);
+            const match = source.trim().match(/^\d+\s+(.*)$/);
+            if (match) {
+              this.sourceLines.set(lineNum, match[1]);
+            }
           }
         }
         this.lineNumbers = Array.from(this.program.keys()).sort((a, b) => a - b);
@@ -959,7 +1029,7 @@ export class GWBasicInterpreter {
         // Direct statement
         const allTokens = lexer.tokenize();
         const p = new Parser(allTokens);
-        const tempProgram = p.parseProgram();
+        const tempFlatAst = p.parseProgram();
         // Try parsing without line numbers as a single statement
         const tempLexer = new Lexer(source);
         const tempTokens = tempLexer.tokenize();

@@ -22,7 +22,8 @@ export function getTermColor(c: TerminalColor): string {
 
 export interface OutputLine {
   text: string
-  colorIdx: number | null  // null = default terminal color, -1 = error
+  fgColorIdx: number | null  // null = default terminal color, -1 = error
+  bgColorIdx: number | null  // null = default terminal color, -1 = error
 }
 
 export const EXAMPLE_PROGRAMS: Record<string, string> = {
@@ -37,7 +38,7 @@ export const EXAMPLE_PROGRAMS: Record<string, string> = {
 20 A = 0
 30 B = 1
 40 FOR I = 1 TO 20
-50 PRINT A;
+50 PRINT A; ", ";
 60 C = A + B
 70 A = B
 80 B = C
@@ -50,7 +51,7 @@ export const EXAMPLE_PROGRAMS: Record<string, string> = {
 60 INPUT "Your guess: "; GUESS
 70 IF GUESS < N THEN PRINT "Too low!" : GOTO 50
 80 IF GUESS > N THEN PRINT "Too high!" : GOTO 50
-90 PRINT "You got it in"; G; "guesses!"`,
+90 PRINT "You got it in "; G; " guesses!"`,
   'Star Pattern': `10 FOR I = 1 TO 10
 20 PRINT SPC(10 - I); STRING$(I * 2 - 1, "*")
 30 NEXT I
@@ -61,7 +62,7 @@ export const EXAMPLE_PROGRAMS: Record<string, string> = {
 20 PRINT "Original array:"
 30 FOR I = 1 TO 10
 40 A(I) = INT(RND * 100)
-50 PRINT A(I);
+50 PRINT A(I); " ";
 60 NEXT I
 70 PRINT
 80 FOR I = 1 TO 9
@@ -71,7 +72,7 @@ export const EXAMPLE_PROGRAMS: Record<string, string> = {
 120 NEXT I
 130 PRINT "Sorted array:"
 140 FOR I = 1 TO 10
-150 PRINT A(I);
+150 PRINT A(I); " ";
 160 NEXT I`,
   'Draw Circles': `10 SCREEN 1
 20 FOR I = 1 TO 15
@@ -107,7 +108,7 @@ export const EXAMPLE_PROGRAMS: Record<string, string> = {
 80 DATA "Alice", 25, "Bob", 30, "Carol", 28
 90 DATA "Dave", 35, "END", 0`,
   'Color Demo': `10 FOR I = 0 TO 15
-20 COLOR I
+20 COLOR I, 15-I
 30 PRINT "Color "; I; " - Hello World!"
 40 NEXT I
 50 COLOR 7`,
@@ -234,24 +235,29 @@ export function useInterpreter() {
   const termRef = ref<HTMLPreElement | null>(null)
   const pendingGraphics: Ref<GraphicsCommand[]> = ref([])
   const currentFgColor = ref<number | null>(null)
+  const currentBgColor = ref<number | null>(null)
   const lastOutputEndedWithNewline = ref(true)
 
   // Add output with color support
   function addOutput(text: string, isError: boolean = false) {
-    const colorIdx = isError ? -1 : currentFgColor.value
+    const fgColorIdx = isError ? -1 : currentFgColor.value
+    const bgColorIdx = isError ? -1 : currentBgColor.value
+    
     const lines = text.split('\n')
+    
+    if (lines.length > 1 && lines[lines.length - 1] === '') {
+      lines.pop()
+    }
 
     // If the first segment doesn't start with a newline, append it to the last existing line
     if (lines.length > 0 && lines[0] !== '' && output.value.length > 0 && !lastOutputEndedWithNewline.value) {
       const lastIdx = output.value.length - 1
       output.value[lastIdx].text += lines[0]
       lines.shift()
-    } else if (lines.length > 0 && lines[0] === '') {
-      lines.shift()
     }
 
     for (const line of lines) {
-      output.value.push({ text: line, colorIdx })
+      output.value.push({ text: line, fgColorIdx, bgColorIdx })
     }
 
     // Limit output buffer
@@ -298,6 +304,7 @@ export function useInterpreter() {
           break
         case 'color':
           currentFgColor.value = out.fg ?? null
+          currentBgColor.value = out.bg ?? null
           break
         case 'locate':
           break
@@ -426,12 +433,20 @@ export function useInterpreter() {
     }
   }
 
-  function getLineColor(line: OutputLine): string {
-    if (line.colorIdx === -1) return '#FF5555'
-    if (line.colorIdx !== null && line.colorIdx >= 0 && line.colorIdx <= 15) {
-      return GWBASIC_COLORS[line.colorIdx]
+  function getForegroundColor(line: OutputLine): string {
+    if (line.fgColorIdx === -1) return '#FF5555'
+    if (line.fgColorIdx !== null && line.fgColorIdx >= 0 && line.fgColorIdx <= 15) {
+      return GWBASIC_COLORS[line.fgColorIdx]
     }
     return getTermColor(terminalColor.value)
+  }
+
+  function getBackgroundColor(line: OutputLine): string {
+    if (line.bgColorIdx === -1) return 'transparent'
+    if (line.bgColorIdx !== null && line.bgColorIdx >= 0 && line.bgColorIdx <= 15) {
+      return GWBASIC_COLORS[line.bgColorIdx]
+    }
+    return 'transparent'
   }
 
   function scrollToBottom() {
@@ -457,7 +472,8 @@ export function useInterpreter() {
     newProgram,
     executeDirect,
     submitInput,
-    getLineColor,
+    getForegroundColor,
+    getBackgroundColor,
     scrollToBottom,
     processPendingGraphics,
   }

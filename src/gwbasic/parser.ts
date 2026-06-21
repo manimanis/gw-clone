@@ -2,7 +2,7 @@
 
 import { TokenType } from './types';
 import type {
-  Token,
+  Token, ASTNode,
   Expression, NumberLiteral, StringLiteral, VariableRef, BinaryOp, UnaryOp, FunctionCall,
   Statement, PrintStatement, InputStatement, LetStatement, IfStatement,
   ForStatement, NextStatement, GotoStatement, GosubStatement, ReturnStatement,
@@ -23,8 +23,8 @@ export class Parser {
     this.pos = 0;
   }
 
-  parseProgram(): Map<number, Statement[]> {
-    const program = new Map<number, Statement[]>();
+  parseProgram(): Statement[] {
+    const program: Statement[] = [];
 
     while (this.pos < this.tokens.length) {
       if (this.current().type === TokenType.Eof) break;
@@ -36,21 +36,22 @@ export class Parser {
       // Try to read a line number
       if (this.current().type === TokenType.Number) {
         const lineNum = Math.floor(parseFloat(this.current().value));
+        const lineNumToken = this.current();
         this.advance();
 
-        // Skip whitespace/eol
+        // Skip whitespace/eol after line number
         while (this.current().type === TokenType.Eol || this.current().type === TokenType.Colon) {
-          if (this.current().type === TokenType.Colon) {
-            this.advance();
-          } else {
-            this.advance();
-          }
+          this.advance();
           if (this.current().type === TokenType.Eof) break;
         }
 
         const stmts = this.parseLineStatements();
-        if (stmts.length > 0) {
-          program.set(lineNum, stmts);
+        for (const stmt of stmts) {
+          (stmt as any).line = lineNum;
+          // Use the statement's own first token column if available, otherwise fall back to line number column
+          const stmtCol = (stmt as any).col !== undefined ? (stmt as any).col : lineNumToken.col;
+          (stmt as any).col = stmtCol;
+          program.push(stmt);
         }
       } else {
         // Direct statement (no line number) - skip
@@ -87,58 +88,68 @@ export class Parser {
 
   private parseStatement(): Statement | null {
     const token = this.current();
+    const startCol = token.col;
 
+    let stmt: Statement | null;
     switch (token.type) {
-      case TokenType.PRINT: return this.parsePrint();
-      case TokenType.INPUT: return this.parseInput();
-      case TokenType.LET: return this.parseLet();
-      case TokenType.IF: return this.parseIf();
-      case TokenType.FOR: return this.parseFor();
-      case TokenType.NEXT: return this.parseNext();
-      case TokenType.GOTO: return this.parseGoto();
-      case TokenType.GOSUB: return this.parseGosub();
-      case TokenType.RETURN: return this.parseReturn();
-      case TokenType.WHILE: return this.parseWhile();
-      case TokenType.WEND: return this.parseWend();
-      case TokenType.SELECT: return this.parseSelect();
-      case TokenType.DIM: return this.parseDim();
-      case TokenType.READ: return this.parseRead();
-      case TokenType.DATA: return this.parseData();
-      case TokenType.RESTORE: return this.parseRestore();
-      case TokenType.REM: return this.parseRem();
-      case TokenType.CLS: return this.parseCls();
-      case TokenType.END: return this.parseEnd();
-      case TokenType.STOP: return this.parseStop();
-      case TokenType.SWAP: return this.parseSwap();
-      case TokenType.RANDOMIZE: return this.parseRandomize();
-      case TokenType.COLOR: return this.parseColor();
-      case TokenType.LOCATE: return this.parseLocate();
-      case TokenType.SCREEN: return this.parseScreen();
-      case TokenType.PSET: return this.parsePset();
-      case TokenType.PRESET: return this.parsePreset();
-      case TokenType.LINE: return this.parseLine();
-      case TokenType.CIRCLE: return this.parseCircle();
-      case TokenType.DRAW: return this.parseDraw();
-      case TokenType.PAINT: return this.parsePaint();
-      case TokenType.BEEP: return this.parseBeep();
-      case TokenType.SOUND: return this.parseSound();
-      case TokenType.POKE: return this.parsePoke();
-      case TokenType.ON: return this.parseOn();
+      case TokenType.PRINT: stmt = this.parsePrint(); break;
+      case TokenType.INPUT: stmt = this.parseInput(); break;
+      case TokenType.LET: stmt = this.parseLet(); break;
+      case TokenType.IF: stmt = this.parseIf(); break;
+      case TokenType.FOR: stmt = this.parseFor(); break;
+      case TokenType.NEXT: stmt = this.parseNext(); break;
+      case TokenType.GOTO: stmt = this.parseGoto(); break;
+      case TokenType.GOSUB: stmt = this.parseGosub(); break;
+      case TokenType.RETURN: stmt = this.parseReturn(); break;
+      case TokenType.WHILE: stmt = this.parseWhile(); break;
+      case TokenType.WEND: stmt = this.parseWend(); break;
+      case TokenType.SELECT: stmt = this.parseSelect(); break;
+      case TokenType.DIM: stmt = this.parseDim(); break;
+      case TokenType.READ: stmt = this.parseRead(); break;
+      case TokenType.DATA: stmt = this.parseData(); break;
+      case TokenType.RESTORE: stmt = this.parseRestore(); break;
+      case TokenType.REM: stmt = this.parseRem(); break;
+      case TokenType.CLS: stmt = this.parseCls(); break;
+      case TokenType.END: stmt = this.parseEnd(); break;
+      case TokenType.STOP: stmt = this.parseStop(); break;
+      case TokenType.SWAP: stmt = this.parseSwap(); break;
+      case TokenType.RANDOMIZE: stmt = this.parseRandomize(); break;
+      case TokenType.COLOR: stmt = this.parseColor(); break;
+      case TokenType.LOCATE: stmt = this.parseLocate(); break;
+      case TokenType.SCREEN: stmt = this.parseScreen(); break;
+      case TokenType.PSET: stmt = this.parsePset(); break;
+      case TokenType.PRESET: stmt = this.parsePreset(); break;
+      case TokenType.LINE: stmt = this.parseLine(); break;
+      case TokenType.CIRCLE: stmt = this.parseCircle(); break;
+      case TokenType.DRAW: stmt = this.parseDraw(); break;
+      case TokenType.PAINT: stmt = this.parsePaint(); break;
+      case TokenType.BEEP: stmt = this.parseBeep(); break;
+      case TokenType.SOUND: stmt = this.parseSound(); break;
+      case TokenType.POKE: stmt = this.parsePoke(); break;
+      case TokenType.ON: stmt = this.parseOn(); break;
+      case TokenType.MID_DOLLAR: stmt = this.parseMidAssign(); break;
 
       // Implicit LET: identifier followed by = or (
       case TokenType.Identifier:
         if (this.lookAhead().type === TokenType.Eq ||
             (this.lookAhead().type === TokenType.LParen && this.isAssignment())) {
-          return this.parseImplicitLet();
+          stmt = this.parseImplicitLet();
+        } else {
+          // Unknown statement - skip to end of line
+          this.skipToEol();
+          return null;
         }
-        // Unknown statement - skip to end of line
-        this.skipToEol();
-        return null;
+        break;
 
       default:
         this.skipToEol();
         return null;
     }
+
+    if (stmt) {
+      (stmt as any).col = startCol;
+    }
+    return stmt;
   }
 
   private isAssignment(): boolean {
@@ -196,8 +207,8 @@ export class Parser {
 
   private parseComparison(): Expression {
     let left = this.parseAddition();
-    const compOps = [TokenType.Eq, TokenType.Ne, TokenType.Lt, TokenType.Gt, TokenType.Le, TokenType.Ge];
-    while (compOps.includes(this.current().type)) {
+    const compOps = [TokenType.Eq, TokenType.Ne, TokenType.Lt, TokenType.Gt, TokenType.Le, TokenType.Ge] as readonly number[];
+    while ((compOps as readonly number[]).includes(this.current().type as number)) {
       const op = this.current().value;
       this.advance();
       const right = this.parseAddition();
@@ -463,7 +474,7 @@ export class Parser {
       return {
         type: 'If',
         condition,
-        thenBranch: [{ type: 'Goto', line: lineNum } as GotoStatement],
+        thenBranch: [{ type: 'Goto', targetLine: lineNum } as GotoStatement],
         elseBranch: [],
       } as IfStatement;
     }
@@ -479,7 +490,7 @@ export class Parser {
            this.lookAhead().type === TokenType.Colon)) {
         const lineNum = Math.floor(parseFloat(this.current().value));
         this.advance();
-        elseBranch = [{ type: 'Goto', line: lineNum } as GotoStatement];
+        elseBranch = [{ type: 'Goto', targetLine: lineNum } as GotoStatement];
       } else {
         elseBranch = this.parseIfBranch();
       }
@@ -559,16 +570,16 @@ export class Parser {
 
   private parseGoto(): Statement {
     this.advance(); // skip GOTO
-    const line = Math.floor(parseFloat(this.current().value));
+    const targetLine = Math.floor(parseFloat(this.current().value));
     this.advance();
-    return { type: 'Goto', line } as GotoStatement;
+    return { type: 'Goto', targetLine } as GotoStatement;
   }
 
   private parseGosub(): Statement {
     this.advance(); // skip GOSUB
-    const line = Math.floor(parseFloat(this.current().value));
+    const targetLine = Math.floor(parseFloat(this.current().value));
     this.advance();
-    return { type: 'Gosub', line } as GosubStatement;
+    return { type: 'Gosub', targetLine } as GosubStatement;
   }
 
   private parseReturn(): Statement {
@@ -1047,6 +1058,44 @@ export class Parser {
     // ERROR RESUME etc - skip
     this.skipToEol();
     return { type: 'End' } as EndStatement;
+  }
+
+  private parseMidAssign(): Statement {
+    this.advance(); // skip MID$
+    this.expect(TokenType.LParen);
+
+    // Parse the variable name (first arg)
+    const varName = this.current().value;
+    this.advance();
+
+    let indices: Expression[] = [];
+    if (this.current().type === TokenType.LParen) {
+      this.advance();
+      indices.push(this.parseExpression());
+      while (this.current().type === TokenType.Comma) {
+        this.advance();
+        indices.push(this.parseExpression());
+      }
+      this.expect(TokenType.RParen);
+    }
+
+    this.expect(TokenType.Comma);
+    const position = this.parseExpression();
+    this.expect(TokenType.Comma);
+    const length = this.parseExpression();
+    this.expect(TokenType.RParen);
+
+    this.expect(TokenType.Eq);
+    const value = this.parseExpression();
+
+    return {
+      type: 'MidAssign',
+      variable: varName,
+      indices,
+      position,
+      length,
+      value,
+    } as any;
   }
 
   // Utility methods

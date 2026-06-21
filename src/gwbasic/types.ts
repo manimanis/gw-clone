@@ -1,40 +1,42 @@
 // GW-BASIC Interpreter Type Definitions
 
-export enum TokenType {
+export const TokenType = {
   // Literals
-  Number,
-  String,
+  Number: 0,
+  String: 1,
   // Identifiers
-  Identifier,
+  Identifier: 2,
   // Keywords
-  PRINT, INPUT, LET, IF, THEN, ELSE, ELSEIF, END_IF,
-  FOR, TO, STEP, NEXT, GOTO, GOSUB, RETURN,
-  WHILE, WEND, SELECT, CASE, END_SELECT,
-  DIM, REM, DATA, READ, RESTORE,
-  CLS, END, STOP, SYSTEM, NEW, LIST, RUN, CONT,
-  AND, OR, NOT, XOR, MOD,
-  LINE, CIRCLE, PSET, PRESET, DRAW, PAINT, SCREEN, COLOR, LOCATE,
-  BEEP, SOUND, PLAY,
-  DEF, FN, SUB, FUNCTION, CALL,
-  OPEN, CLOSE, WRITE, GET, PUT,
-  ON, ERROR, RESUME,
-  SWAP, RANDOMIZE, TIMER,
-  INKEY, CHR_DOLLAR, STR_DOLLAR, VAL, ASC_FUNC,
-  LEN_FUNC, LEFT_DOLLAR, RIGHT_DOLLAR, MID_DOLLAR,
-  TAB_FUNC, SPC_FUNC, STRING_DOLLAR, SPACE_DOLLAR,
-  INSTR_FUNC, UCASE_DOLLAR, LCASE_DOLLAR,
-  ABS_FUNC, INT_FUNC, RND_FUNC, SQR_FUNC,
-  SIN_FUNC, COS_FUNC, TAN_FUNC, ATN_FUNC,
-  LOG_FUNC, EXP_FUNC, SGN_FUNC, FIX_FUNC,
-  PEEK_FUNC, POKE,
+  PRINT: 3, INPUT: 4, LET: 5, IF: 6, THEN: 7, ELSE: 8, ELSEIF: 9, END_IF: 10,
+  FOR: 11, TO: 12, STEP: 13, NEXT: 14, GOTO: 15, GOSUB: 16, RETURN: 17,
+  WHILE: 18, WEND: 19, SELECT: 20, CASE: 21, END_SELECT: 22,
+  DIM: 23, REM: 24, DATA: 25, READ: 26, RESTORE: 27,
+  CLS: 28, END: 29, STOP: 30, SYSTEM: 31, NEW: 32, LIST: 33, RUN: 34, CONT: 35,
+  AND: 36, OR: 37, NOT: 38, XOR: 39, MOD: 40,
+  LINE: 41, CIRCLE: 42, PSET: 43, PRESET: 44, DRAW: 45, PAINT: 46, SCREEN: 47, COLOR: 48, LOCATE: 49,
+  BEEP: 50, SOUND: 51, PLAY: 52,
+  DEF: 53, FN: 54, SUB: 55, FUNCTION: 56, CALL: 57,
+  OPEN: 58, CLOSE: 59, WRITE: 60, GET: 61, PUT: 62,
+  ON: 63, ERROR: 64, RESUME: 65,
+  SWAP: 66, RANDOMIZE: 67, TIMER: 68,
+  INKEY: 69, CHR_DOLLAR: 70, STR_DOLLAR: 71, VAL: 72, ASC_FUNC: 73,
+  LEN_FUNC: 74, LEFT_DOLLAR: 75, RIGHT_DOLLAR: 76, MID_DOLLAR: 77,
+  TAB_FUNC: 78, SPC_FUNC: 79, STRING_DOLLAR: 80, SPACE_DOLLAR: 81,
+  INSTR_FUNC: 82, UCASE_DOLLAR: 83, LCASE_DOLLAR: 84,
+  ABS_FUNC: 85, INT_FUNC: 86, RND_FUNC: 87, SQR_FUNC: 88,
+  SIN_FUNC: 89, COS_FUNC: 90, TAN_FUNC: 91, ATN_FUNC: 92,
+  LOG_FUNC: 93, EXP_FUNC: 94, SGN_FUNC: 95, FIX_FUNC: 96,
+  PEEK_FUNC: 97, POKE: 98,
   // Operators
-  Plus, Minus, Star, Slash, BackSlash, Caret,
-  Eq, Ne, Lt, Gt, Le, Ge,
+  Plus: 99, Minus: 100, Star: 101, Slash: 102, BackSlash: 103, Caret: 104,
+  Eq: 105, Ne: 106, Lt: 107, Gt: 108, Le: 109, Ge: 110,
   // Punctuation
-  LParen, RParen, Comma, Semicolon, Colon,
+  LParen: 111, RParen: 112, Comma: 113, Semicolon: 114, Colon: 115,
   // Special
-  Eol, Eof,
-}
+  Eol: 116, Eof: 117,
+} as const;
+
+export type TokenType = typeof TokenType[keyof typeof TokenType];
 
 export interface Token {
   type: TokenType;
@@ -136,12 +138,12 @@ export interface NextStatement extends ASTNode {
 
 export interface GotoStatement extends ASTNode {
   type: 'Goto';
-  line: number;
+  targetLine: number;
 }
 
 export interface GosubStatement extends ASTNode {
   type: 'Gosub';
-  line: number;
+  targetLine: number;
 }
 
 export interface ReturnStatement extends ASTNode {
@@ -302,6 +304,15 @@ export interface OnGosubStatement extends ASTNode {
   lines: number[];
 }
 
+export interface MidAssignStatement extends ASTNode {
+  type: 'MidAssign';
+  variable: string;
+  indices: Expression[];
+  position: Expression;
+  length: Expression;
+  value: Expression;
+}
+
 export interface MultiStatement extends ASTNode {
   type: 'Multi';
   statements: Statement[];
@@ -343,6 +354,7 @@ export type Statement =
   | PokeStatement
   | OnGotoStatement
   | OnGosubStatement
+  | MidAssignStatement
   | MultiStatement;
 
 // Interpreter state

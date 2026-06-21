@@ -19,7 +19,8 @@ const {
   newProgram,
   executeDirect,
   submitInput,
-  getLineColor,
+  getForegroundColor,
+  getBackgroundColor,
   scrollToBottom,
 } = useInterpreter()
 
@@ -193,13 +194,11 @@ const termColor = () => getTermColor(terminalColor.value)
           <div class="absolute inset-0 pointer-events-none z-10" :style="{
             background: 'radial-gradient(ellipse at center, transparent 60%, rgba(0,0,0,0.4) 100%)',
           }" />
-{{ output }}
           <pre ref="termRef" class="absolute inset-0 p-3 font-mono text-sm overflow-y-auto overflow-x-hidden"
             :style="{ color: termColor() }"><span
               v-for="(line, i) in output"
               :key="i"
-              :style="{ color: getLineColor(line) }"
-            >{{ line.text }}</span><span v-if="inputMode" class="flex items-center"><span>{{ inputPrompt }}</span><input
+              :style="{ color: getForegroundColor(line), backgroundColor: getBackgroundColor(line) }">{{ line.text + '\n' }}</span><span v-if="inputMode" class="flex items-center"><span>{{ inputPrompt }}</span><input
                 id="basic-input"
                 ref="inputEl"
                 v-model="currentInput"
@@ -215,7 +214,7 @@ const termColor = () => getTermColor(terminalColor.value)
         <div class="flex-1 flex items-center justify-center"
           :style="{ backgroundColor: '#000000', display: activeTab === 'graphics' ? 'flex' : 'none' }">
           <canvas ref="canvasRef" width="320" height="200" class="border border-[#333355]"
-            style="image-rendering: pixelated; max-width: 100%; max-height: 100%" />
+            style="image-rendering: pixelated; width: 100%; max-width: 100%; max-height: 100%" />
         </div>
       </div>
     </div>
