@@ -7,6 +7,7 @@ import type {
   Statement, PrintStatement, InputStatement, LetStatement, IfStatement,
   ForStatement, NextStatement, GotoStatement, GosubStatement, ReturnStatement,
   WhileStatement, WendStatement, SelectStatement, DimStatement, ReadStatement,
+  ReadVariable,
   DataStatement, RestoreStatement, RemStatement, ClsStatement, EndStatement,
   StopStatement, SwapStatement, RandomizeStatement, ColorStatement, LocateStatement,
   ScreenStatement, PsetStatement, LineStatement, CircleStatement, DrawStatement,
@@ -128,6 +129,8 @@ export class Parser {
       case TokenType.POKE: stmt = this.parsePoke(); break;
       case TokenType.ON: stmt = this.parseOn(); break;
       case TokenType.MID_DOLLAR: stmt = this.parseMidAssign(); break;
+
+      case TokenType.CALL: stmt = this.parseCall(); break;
 
       // Implicit LET: identifier followed by = or (
       case TokenType.Identifier:
@@ -302,6 +305,11 @@ export class Parser {
       TokenType.DATESTR_DOLLAR, TokenType.TODATE_FUNC,
       // non standard functions
       TokenType.ATAN2_FUNC, TokenType.HYPO_FUNC,
+      // Statistical functions
+      TokenType.SUM_FUNC, TokenType.AVG_FUNC, TokenType.SUMPROD_FUNC, TokenType.AVGP_FUNC,
+      TokenType.MIN_FUNC, TokenType.MAX_FUNC, TokenType.VARIP_FUNC, TokenType.STDP_FUNC, TokenType.MEDIAN_FUNC,
+      // Array functions
+      TokenType.FIND_FUNC,
     ];
 
     if (funcTypes.includes(token.type)) {
@@ -676,14 +684,38 @@ export class Parser {
 
   private parseRead(): Statement {
     this.advance(); // skip READ
-    const variables: string[] = [];
+    const variables: ReadVariable[] = [];
 
-    variables.push(this.current().value);
+    // READ can handle both simple variables and array elements like A(I)
+    const name = this.current().value;
     this.advance();
+    let indices: Expression[] = [];
+    if (this.current().type === TokenType.LParen) {
+      this.advance();
+      indices.push(this.parseExpression());
+      while (this.current().type === TokenType.Comma) {
+        this.advance();
+        indices.push(this.parseExpression());
+      }
+      this.expect(TokenType.RParen);
+    }
+    variables.push({ name, indices });
+
     while (this.current().type === TokenType.Comma) {
       this.advance();
-      variables.push(this.current().value);
+      const nextName = this.current().value;
       this.advance();
+      let nextIndices: Expression[] = [];
+      if (this.current().type === TokenType.LParen) {
+        this.advance();
+        nextIndices.push(this.parseExpression());
+        while (this.current().type === TokenType.Comma) {
+          this.advance();
+          nextIndices.push(this.parseExpression());
+        }
+        this.expect(TokenType.RParen);
+      }
+      variables.push({ name: nextName, indices: nextIndices });
     }
 
     return { type: 'Read', variables } as ReadStatement;
@@ -1102,6 +1134,30 @@ export class Parser {
       length,
       value,
     } as any;
+  }
+
+  private parseCall(): Statement {
+    this.advance(); // skip CALL
+
+    // Read the subroutine name (SORT, INVERT, etc.)
+    const subName = this.current().value;
+    this.advance();
+
+    // Parse argument list: (args)
+    const args: Expression[] = [];
+    if (this.current().type === TokenType.LParen) {
+      this.advance(); // skip (
+      if (this.current().type !== TokenType.RParen) {
+        args.push(this.parseExpression());
+        while (this.current().type === TokenType.Comma) {
+          this.advance();
+          args.push(this.parseExpression());
+        }
+      }
+      this.expect(TokenType.RParen);
+    }
+
+    return { type: 'Call', subName, args } as any;
   }
 
   // Utility methods

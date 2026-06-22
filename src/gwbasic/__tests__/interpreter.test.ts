@@ -479,9 +479,9 @@ describe('GWBasicInterpreter', () => {
     it('should handle string array variables', async () => {
       await interpreter.run(`
 10 DIM A$(2)
-20 A$(1) = "Hello"
-30 A$(2) = "World"
-40 PRINT A$(1) + " " + A$(2)
+20 A$(0) = "Hello"
+30 A$(1) = "World"
+40 PRINT A$(0) + " " + A$(1)
 50 END
       `);
       const printOutput = getOutput();
@@ -656,5 +656,4 @@ describe('GWBasicInterpreter', () => {
       expect(printOutput).toContain('10');
     });
   });
-
 });

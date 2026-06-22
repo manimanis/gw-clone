@@ -346,11 +346,8 @@ describe('Date string conversion', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2026, 5, 16, 6, 45, 30));
 
-    console.log(outputs);
-
     await interpreter.run('10 D = TODATE("invalid")\n20 PRINT D');
     const output = getOutput();
-    console.log(output);
     // expect(output).toContain('ERROR');
   });
 });

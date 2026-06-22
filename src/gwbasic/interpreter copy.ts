@@ -5,12 +5,11 @@ import type {
   Statement, PrintStatement, InputStatement, LetStatement, IfStatement,
   ForStatement, NextStatement, GotoStatement, GosubStatement, ReturnStatement,
   WhileStatement, WendStatement, SelectStatement, DimStatement, ReadStatement,
-  ReadVariable,
   DataStatement, RestoreStatement, RemStatement, ClsStatement, EndStatement,
   StopStatement, SwapStatement, RandomizeStatement, ColorStatement, LocateStatement,
   ScreenStatement, PsetStatement, LineStatement, CircleStatement, DrawStatement,
   PaintStatement, BeepStatement, SoundStatement, PokeStatement,
-  OnGotoStatement, OnGosubStatement, MidAssignStatement, CallStatement,
+  OnGotoStatement, OnGosubStatement, MidAssignStatement,
   InterpreterOutput, GraphicsCommand, ASTNode,
 } from './types';
 import { Lexer } from './lexer';
@@ -20,7 +19,8 @@ export type OutputCallback = (output: InterpreterOutput) => void;
 export type InputCallback = () => Promise<string>;
 
 export class GWBasicInterpreter {
-  private variables: Map<string, any> = new Map();
+  private variables: Map<string, unknown> = new Map();
+  private arrays: Map<string, { dimensions: number[]; data: unknown[] }> = new Map();
   private program: Map<number, Statement[]> = new Map();
   private flatProgram: Statement[] = [];
   private lineNumbers: number[] = [];
@@ -144,9 +144,9 @@ export class GWBasicInterpreter {
         throw err;
       }
       if (err.message.startsWith('Unterminated string') ||
-        err.message.startsWith('Duplicate line number') ||
-        err.message.startsWith('Syntax error') ||
-        err.message.startsWith('Expected')) {
+          err.message.startsWith('Duplicate line number') ||
+          err.message.startsWith('Syntax error') ||
+          err.message.startsWith('Expected')) {
         throw err;
       }
       throw new Error(`Syntax error: ${err.message}`);
@@ -227,6 +227,7 @@ export class GWBasicInterpreter {
   // Reset state
   reset(): void {
     this.variables.clear();
+    this.arrays.clear();
     this.forStack = [];
     this.gosubStack = [];
     this.whileStack = [];
@@ -340,7 +341,6 @@ export class GWBasicInterpreter {
       case 'OnGoto': this.execOnGoto(stmt as OnGotoStatement); break;
       case 'OnGosub': await this.execOnGosub(stmt as OnGosubStatement); break;
       case 'MidAssign': this.execMidAssign(stmt as MidAssignStatement); break;
-      case 'Call': this.execCall(stmt as CallStatement); break;
     }
   }
 
@@ -358,21 +358,18 @@ export class GWBasicInterpreter {
   }
 
   getVariables() {
-    return this.variables;
+    return {variables: this.variables, arrays: this.arrays};
   }
 
   private getVariable(ref: VariableRef): unknown {
-    if (!this.variables.has(ref.name)) {
-      throw new Error(`Variable ${ref.name} not declared`);
-    }
-    const variable = this.variables.get(ref.name);
     if (ref.indices.length > 0) {
-      if (variable.dimensions) {
-        return this.getArrayElement(ref.name, ref.indices);
+      // Si le nom se termine par $ et n'est PAS un tableau DIM, c'est un accès caractère
+      if (ref.name.endsWith('$') && !this.arrays.has(ref.name)) {
+        return this.getStringChar(ref.name, ref.indices);
       }
-      return this.getStringChar(ref.name, ref.indices);
+      return this.getArrayElement(ref.name, ref.indices);
     }
-    return variable ?? 0;
+    return this.variables.get(ref.name) ?? 0;
   }
 
   // Accéder au caractère d'indice ind (1-indexé) dans une chaîne
@@ -386,25 +383,10 @@ export class GWBasicInterpreter {
   }
 
   private getArrayElement(name: string, indexExprs: Expression[]): unknown {
-    if (!this.variables.has(name)) {
-      throw new Error(`Array ${name} not declared`);
-    }
-    const arr = this.variables.get(name);
-    if (arr.dimensions.length !== indexExprs.length) {
-      throw new Error(`Variable ${name} has ${arr.dimensions.length} dimensions, but ${indexExprs.length} indices provided`);
-    }
+    const arr = this.arrays.get(name);
+    if (!arr) return 0;
+
     const indices = indexExprs.map(e => Math.floor(this.toNumber(this.evalExpr(e))));
-
-    let invalidIndex = -1;
-    indices.forEach((index, i) => {
-      if (index < 0 || index >= arr.dimensions[i]) {
-        invalidIndex = i;
-      }
-    });
-    if (invalidIndex !== -1) {
-      throw new Error(`Array index out of range ${indices[invalidIndex]} for ${name} at dimension ${invalidIndex + 1}`);
-    }
-
     let flatIndex = 0;
     let multiplier = 1;
     for (let i = arr.dimensions.length - 1; i >= 0; i--) {
@@ -412,14 +394,19 @@ export class GWBasicInterpreter {
       multiplier *= arr.dimensions[i];
     }
 
+    if (flatIndex < 0 || flatIndex >= arr.data.length) return 0;
     return arr.data[flatIndex];
   }
 
   private setArrayElement(name: string, indexExprs: Expression[], value: unknown): void {
-    if (!this.variables.has(name)) {
-      throw new Error(`Array ${name} not declared`);
+    let arr = this.arrays.get(name);
+    if (!arr) {
+      // Auto-dimension with size 11 (0-10) per dimension
+      const dims = indexExprs.map(() => 11);
+      const totalSize = dims.reduce((a, b) => a * b, 1);
+      arr = { dimensions: dims, data: new Array(totalSize).fill(0) };
+      this.arrays.set(name, arr);
     }
-    let arr = this.variables.get(name);
 
     const indices = indexExprs.map(e => Math.floor(this.toNumber(this.evalExpr(e))));
     let flatIndex = 0;
@@ -668,8 +655,8 @@ export class GWBasicInterpreter {
           const arrName = (func.args[0] as VariableRef).name;
           const n = Math.floor(this.toNumber(args[1]));
           let sum = 0;
-          for (let i = 0; i < n; i++) {
-            const idxExpr = { type: 'NumberLiteral', value: i } as any;
+          for (let i = 0; i <= n; i++) {
+            const idxExpr = { type: 'NumberLiteral', value: i + 1 } as any;
             sum += this.toNumber(this.getArrayElement(arrName, [idxExpr]));
           }
           return sum;
@@ -684,11 +671,11 @@ export class GWBasicInterpreter {
           const n = Math.floor(this.toNumber(args[1]));
           if (n === 0) return 0;
           let sum = 0;
-          for (let i = 0; i < n; i++) {
-            const idxExpr = { type: 'NumberLiteral', value: i } as any;
+          for (let i = 0; i <= n; i++) {
+            const idxExpr = { type: 'NumberLiteral', value: i + 1 } as any;
             sum += this.toNumber(this.getArrayElement(arrName, [idxExpr]));
           }
-          return sum / n;
+          return sum / (n + 1);
         }
         // AVG(a1, a2, a3, ...)
         if (args.length === 0) return 0;
@@ -696,15 +683,15 @@ export class GWBasicInterpreter {
         return sum / args.length;
       }
       case 'SUMPROD': {
-        if (args.length === 3 && typeof args[2] === 'number' &&
-          func.args[0].type === 'VariableRef' && func.args[1].type === 'VariableRef') {
+        if (args.length === 3 && typeof args[2] === 'number' && 
+            func.args[0].type === 'VariableRef' && func.args[1].type === 'VariableRef') {
           // SUMPROD(a, b, n)
           const aName = (func.args[0] as VariableRef).name;
           const bName = (func.args[1] as VariableRef).name;
           const n = Math.floor(this.toNumber(args[2]));
           let sum = 0;
           for (let i = 0; i < n; i++) {
-            const idxExpr = { type: 'NumberLiteral', value: i } as any;
+            const idxExpr = { type: 'NumberLiteral', value: i + 1 } as any;
             const aVal = this.toNumber(this.getArrayElement(aName, [idxExpr]));
             const bVal = this.toNumber(this.getArrayElement(bName, [idxExpr]));
             sum += aVal * bVal;
@@ -720,7 +707,7 @@ export class GWBasicInterpreter {
       }
       case 'AVGP': {
         if (args.length === 3 && typeof args[2] === 'number' &&
-          func.args[0].type === 'VariableRef' && func.args[1].type === 'VariableRef') {
+            func.args[0].type === 'VariableRef' && func.args[1].type === 'VariableRef') {
           // AVGP(a, b, n) - weighted average of two arrays
           const aName = (func.args[0] as VariableRef).name;
           const bName = (func.args[1] as VariableRef).name;
@@ -728,7 +715,7 @@ export class GWBasicInterpreter {
           let sumA = 0;
           let sumB = 0;
           for (let i = 0; i < n; i++) {
-            const idxExpr = { type: 'NumberLiteral', value: i } as any;
+            const idxExpr = { type: 'NumberLiteral', value: i + 1 } as any;
             sumA += this.toNumber(this.getArrayElement(aName, [idxExpr]));
             sumB += this.toNumber(this.getArrayElement(bName, [idxExpr]));
           }
@@ -750,7 +737,7 @@ export class GWBasicInterpreter {
           const n = Math.floor(this.toNumber(args[1]));
           let min = Infinity;
           for (let i = 0; i < n; i++) {
-            const idxExpr = { type: 'NumberLiteral', value: i } as any;
+            const idxExpr = { type: 'NumberLiteral', value: i + 1 } as any;
             const val = this.toNumber(this.getArrayElement(arrName, [idxExpr]));
             if (val < min) min = val;
           }
@@ -767,7 +754,7 @@ export class GWBasicInterpreter {
           const n = Math.floor(this.toNumber(args[1]));
           let max = -Infinity;
           for (let i = 0; i < n; i++) {
-            const idxExpr = { type: 'NumberLiteral', value: i } as any;
+            const idxExpr = { type: 'NumberLiteral', value: i + 1 } as any;
             const val = this.toNumber(this.getArrayElement(arrName, [idxExpr]));
             if (val > max) max = val;
           }
@@ -785,7 +772,7 @@ export class GWBasicInterpreter {
           if (n < 2) return 0;
           const values: number[] = [];
           for (let i = 0; i < n; i++) {
-            const idxExpr = { type: 'NumberLiteral', value: i } as any;
+            const idxExpr = { type: 'NumberLiteral', value: i + 1 } as any;
             values.push(this.toNumber(this.getArrayElement(arrName, [idxExpr])));
           }
           const mean = values.reduce((a, b) => a + b, 0) / n;
@@ -807,7 +794,7 @@ export class GWBasicInterpreter {
           if (n < 2) return 0;
           const values: number[] = [];
           for (let i = 0; i < n; i++) {
-            const idxExpr = { type: 'NumberLiteral', value: i } as any;
+            const idxExpr = { type: 'NumberLiteral', value: i + 1 } as any;
             values.push(this.toNumber(this.getArrayElement(arrName, [idxExpr])));
           }
           const mean = values.reduce((a, b) => a + b, 0) / n;
@@ -828,7 +815,7 @@ export class GWBasicInterpreter {
           const n = Math.floor(this.toNumber(args[1]));
           const values: number[] = [];
           for (let i = 0; i < n; i++) {
-            const idxExpr = { type: 'NumberLiteral', value: i } as any;
+            const idxExpr = { type: 'NumberLiteral', value: i + 1 } as any;
             values.push(this.toNumber(this.getArrayElement(arrName, [idxExpr])));
           }
           values.sort((a, b) => a - b);
@@ -844,25 +831,6 @@ export class GWBasicInterpreter {
           return (values[values.length / 2 - 1] + values[values.length / 2]) / 2;
         }
         return values[Math.floor(values.length / 2)];
-      }
-      case 'FIND': {
-        // FIND(val, arr, count) -> search for position of val in first count elements of arr
-        // FIND(val, arr, count, p) -> search for position of val in first count elements of arr starting from position p
-        if (func.args.length < 3 || func.args[1].type !== 'VariableRef') {
-          return 0;
-        }
-        const val = args[0];
-        const arrName = (func.args[1] as VariableRef).name;
-        const count = Math.floor(this.toNumber(args[2]));
-        const startPos = args.length > 3 ? Math.floor(this.toNumber(args[3])) : 0; // Convert to 0-indexed
-        for (let i = startPos; i < count; i++) {
-          const idxExpr = { type: 'NumberLiteral', value: i } as any;
-          const element = this.getArrayElement(arrName, [idxExpr]);
-          if (this.toNumber(element) === this.toNumber(val)) {
-            return i; // Return 0-indexed position
-          }
-        }
-        return -1; // Not found
       }
       default: return 0;
     }
@@ -926,15 +894,13 @@ export class GWBasicInterpreter {
 
   private execLet(stmt: LetStatement): void {
     const value = this.evalExpr(stmt.value);
+
     if (stmt.indices.length > 0) {
-      if (!this.variables.has(stmt.name)) {
-        throw new Error(`Variable ${stmt.name} not declared`);
-      }
-      const variable = this.variables.get(stmt.name);
-      if (variable.dimensions) {
-        this.setArrayElement(stmt.name, stmt.indices, value);
-      } else {
+      // Si le nom se termine par $ et n'est PAS un tableau DIM, c'est un accès caractère
+      if (stmt.name.endsWith('$') && !this.arrays.has(stmt.name)) {
         this.setStringChar(stmt.name, stmt.indices, value);
+      } else {
+        this.setArrayElement(stmt.name, stmt.indices, value);
       }
     } else {
       this.variables.set(stmt.name, value);
@@ -1157,10 +1123,10 @@ export class GWBasicInterpreter {
 
   private execDim(stmt: DimStatement): void {
     for (const dim of stmt.dimensions) {
-      const bounds = dim.bounds.map(b => Math.floor(this.toNumber(this.evalExpr(b))));
+      const bounds = dim.bounds.map(b => Math.floor(this.toNumber(this.evalExpr(b))) + 1); // +1 for 0-based
       const totalSize = bounds.reduce((a, b) => a * b, 1);
       const isString = dim.name.endsWith('$');
-      this.variables.set(dim.name, {
+      this.arrays.set(dim.name, {
         dimensions: bounds,
         data: new Array(totalSize).fill(isString ? '' : 0),
       });
@@ -1168,23 +1134,17 @@ export class GWBasicInterpreter {
   }
 
   private execRead(stmt: ReadStatement): void {
-    for (const readVar of stmt.variables) {
+    for (const varName of stmt.variables) {
       if (this.dataPointer >= this.dataValues.length) {
         throw new Error('Out of DATA');
       }
       const val = this.dataValues[this.dataPointer++];
+      const isStringVar = varName.endsWith('$');
 
-      if (readVar.indices.length > 0) {
-        // Array element assignment: READ A(I)
-        this.setArrayElement(readVar.name, readVar.indices, val);
+      if (isStringVar) {
+        this.variables.set(varName, String(val));
       } else {
-        // Simple variable assignment: READ X
-        const isStringVar = readVar.name.endsWith('$');
-        if (isStringVar) {
-          this.variables.set(readVar.name, String(val));
-        } else {
-          this.variables.set(readVar.name, typeof val === 'number' ? val : parseFloat(String(val)) || 0);
-        }
+        this.variables.set(varName, typeof val === 'number' ? val : parseFloat(String(val)) || 0);
       }
     }
   }
@@ -1363,74 +1323,6 @@ export class GWBasicInterpreter {
     }
   }
 
-  private execCall(stmt: CallStatement): void {
-    const args = stmt.args.map(a => this.evalExpr(a));
-
-    switch (stmt.subName) {
-      case 'SORT': {
-        // CALL SORT(arr, d, f) - sort elements between indices d and f (exclusive) in ascending order
-        if (args.length < 3) {
-          throw new Error('CALL SORT requires 3 arguments: array, start, end');
-        }
-        const arrName = (stmt.args[0] as VariableRef).name;
-        const d = Math.floor(this.toNumber(args[1]));
-        const f = Math.floor(this.toNumber(args[2]));
-        if (!this.variables.has(arrName)) {
-          throw new Error(`Array ${arrName} not declared`);
-        }
-        const arr = this.variables.get(arrName);
-        if (!arr.dimensions) {
-          throw new Error(`${arrName} is not an array`);
-        }
-        // Extract the subarray from d to f (exclusive)
-        const subArray: number[] = [];
-        for (let i = d; i < f; i++) {
-          const idxExpr = { type: 'NumberLiteral', value: i } as any;
-          subArray.push(this.toNumber(this.getArrayElement(arrName, [idxExpr])));
-        }
-        // Sort the subarray
-        subArray.sort((a, b) => a - b);
-        // Write back
-        for (let i = d; i < f; i++) {
-          const idxExpr = { type: 'NumberLiteral', value: i } as any;
-          this.setArrayElement(arrName, [idxExpr], subArray[i - d]);
-        }
-        break;
-      }
-      case 'INVERT': {
-        // CALL INVERT(arr, d, f) - invert elements between indices d and f (exclusive)
-        if (args.length < 3) {
-          throw new Error('CALL INVERT requires 3 arguments: array, start, end');
-        }
-        const arrName = (stmt.args[0] as VariableRef).name;
-        const d = Math.floor(this.toNumber(args[1]));
-        const f = Math.floor(this.toNumber(args[2]));
-        if (!this.variables.has(arrName)) {
-          throw new Error(`Array ${arrName} not declared`);
-        }
-        const arr = this.variables.get(arrName);
-        if (!arr.dimensions) {
-          throw new Error(`${arrName} is not an array`);
-        }
-        // Invert elements between d and f (exclusive)
-        let left = d;
-        let right = f - 1;
-        while (left < right) {
-          const leftExpr = { type: 'NumberLiteral', value: left } as any;
-          const rightExpr = { type: 'NumberLiteral', value: right } as any;
-          const temp = this.getArrayElement(arrName, [leftExpr]);
-          this.setArrayElement(arrName, [leftExpr], this.getArrayElement(arrName, [rightExpr]));
-          this.setArrayElement(arrName, [rightExpr], temp);
-          left++;
-          right--;
-        }
-        break;
-      }
-      default:
-        throw new Error(`Unknown CALL subroutine: ${stmt.subName}`);
-    }
-  }
-
   private output(out: InterpreterOutput): void {
     this.outputCallback(out);
   }
@@ -1481,7 +1373,7 @@ export class GWBasicInterpreter {
       } catch (e: unknown) {
         const err = e as Error;
         if (err.message.startsWith('Unterminated string') ||
-          err.message.startsWith('Expected')) {
+            err.message.startsWith('Expected')) {
           throw err;
         }
         throw new Error(`Syntax error: ${err.message}`);

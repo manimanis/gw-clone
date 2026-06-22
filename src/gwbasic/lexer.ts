@@ -116,6 +116,18 @@ const KEYWORDS: Record<string, TokenType> = {
   // Non standard
   'ATAN2': TokenType.ATAN2_FUNC,
   'HYPO': TokenType.HYPO_FUNC,
+  // Statistical functions
+  'SUM': TokenType.SUM_FUNC,
+  'AVG': TokenType.AVG_FUNC,
+  'SUMPROD': TokenType.SUMPROD_FUNC,
+  'AVGP': TokenType.AVGP_FUNC,
+  'MIN': TokenType.MIN_FUNC,
+  'MAX': TokenType.MAX_FUNC,
+  'VARIP': TokenType.VARIP_FUNC,
+  'STDP': TokenType.STDP_FUNC,
+  'MEDIAN': TokenType.MEDIAN_FUNC,
+  // Array functions
+  'FIND': TokenType.FIND_FUNC,
 };
 
 export class Lexer {

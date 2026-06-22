@@ -33,6 +33,11 @@ export const TokenType = {
   DATESTR_DOLLAR: 126, TODATE_FUNC: 127,
   // Non standard function
   ATAN2_FUNC: 128, HYPO_FUNC: 129,
+  // Statistical functions
+  SUM_FUNC: 130, AVG_FUNC: 131, SUMPROD_FUNC: 132, AVGP_FUNC: 133,
+  MIN_FUNC: 134, MAX_FUNC: 135, VARIP_FUNC: 136, STDP_FUNC: 137, MEDIAN_FUNC: 138,
+  // Array Functions
+  FIND_FUNC: 139,
   // Operators
   Plus: 99, Minus: 100, Star: 101, Slash: 102, BackSlash: 103, Caret: 104,
   Eq: 105, Ne: 106, Lt: 107, Gt: 108, Le: 109, Ge: 110,
@@ -182,9 +187,14 @@ export interface DimStatement extends ASTNode {
   dimensions: { name: string; bounds: Expression[] }[];
 }
 
+export interface ReadVariable {
+  name: string;
+  indices: Expression[];
+}
+
 export interface ReadStatement extends ASTNode {
   type: 'Read';
-  variables: string[];
+  variables: ReadVariable[];
 }
 
 export interface DataStatement extends ASTNode {
@@ -319,6 +329,12 @@ export interface MidAssignStatement extends ASTNode {
   value: Expression;
 }
 
+export interface CallStatement extends ASTNode {
+  type: 'Call';
+  subName: string;
+  args: Expression[];
+}
+
 export interface MultiStatement extends ASTNode {
   type: 'Multi';
   statements: Statement[];
@@ -361,6 +377,7 @@ export type Statement =
   | OnGotoStatement
   | OnGosubStatement
   | MidAssignStatement
+  | CallStatement
   | MultiStatement;
 
 // Interpreter state
