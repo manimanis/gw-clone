@@ -226,6 +226,14 @@ export class Lexer {
         continue;
       }
 
+      // Apostrophe ' as REM synonym
+      if (ch === "'") {
+        tokens.push({ type: TokenType.REM, value: "'", line: this.line, col: this.col });
+        this.pos++;
+        this.col++;
+        continue;
+      }
+
       // Operators and punctuation
       const op = this.readOperator();
       if (op) {

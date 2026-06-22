@@ -5,14 +5,13 @@ import type {
   Statement, PrintStatement, InputStatement, LetStatement, IfStatement,
   ForStatement, NextStatement, GotoStatement, GosubStatement, ReturnStatement,
   WhileStatement, WendStatement, SelectStatement, DimStatement, ReadStatement,
-  ReadVariable,
-  DataStatement, RestoreStatement, RemStatement, ClsStatement, EndStatement,
-  StopStatement, SwapStatement, RandomizeStatement, ColorStatement, LocateStatement,
+  DataStatement,
+  SwapStatement, RandomizeStatement, ColorStatement, LocateStatement,
   ScreenStatement, PsetStatement, LineStatement, CircleStatement, DrawStatement,
-  PaintStatement, BeepStatement, SoundStatement, PokeStatement,
+  PaintStatement, SoundStatement,
   OnGotoStatement, OnGosubStatement, MidAssignStatement, CallStatement,
   DefFnStatement, OnErrorStatement, ResumeStatement, RenumStatement,
-  InterpreterOutput, GraphicsCommand, ASTNode,
+  InterpreterOutput, ASTNode,
 } from './types';
 import { Lexer } from './lexer';
 import { Parser } from './parser';
@@ -48,7 +47,6 @@ export class GWBasicInterpreter {
   private lastErrorLine: number | null = null;
   private lastErrorCode: number = 0;
   private customFunctions: Map<string, { paramName: string; expression: Expression }> = new Map();
-  private keyBuffer: string = '';
 
   private outputCallback: OutputCallback;
   private inputCallback: InputCallback;

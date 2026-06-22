@@ -26,6 +26,40 @@ export interface OutputLine {
   bgColorIdx: number | null  // null = default terminal color, -1 = error
 }
 
+const STORAGE_KEYS = {
+  SOURCE: 'gwbasic_source',
+  SPLITTER: 'gwbasic_splitter_pos',
+}
+
+export function saveSourceToLocalStorage(source: string) {
+  try {
+    localStorage.setItem(STORAGE_KEYS.SOURCE, source)
+  } catch { /* ignore */ }
+}
+
+export function loadSourceFromLocalStorage(): string {
+  try {
+    return localStorage.getItem(STORAGE_KEYS.SOURCE) || ''
+  } catch {
+    return ''
+  }
+}
+
+export function saveSplitterPosition(pos: number) {
+  try {
+    localStorage.setItem(STORAGE_KEYS.SPLITTER, String(pos))
+  } catch { /* ignore */ }
+}
+
+export function loadSplitterPosition(): number {
+  try {
+    const val = localStorage.getItem(STORAGE_KEYS.SPLITTER)
+    return val ? Number(val) : 50
+  } catch {
+    return 50
+  }
+}
+
 export const EXAMPLE_PROGRAMS: Record<string, string> = {
   'Hello World': `10 PRINT "Hello, World!"
 20 PRINT "Welcome to GW-BASIC!"
@@ -68,7 +102,7 @@ export const EXAMPLE_PROGRAMS: Record<string, string> = {
 80 NEXT I
 90 PRINT "Sorted array:" : GOSUB 300
 100 END
-200 REM Display the table
+200 REM Generate random values
 210 FOR I = 0 TO 9: A(I) = INT(RND * 100) : NEXT I : PRINT
 220 RETURN
 300 REM Display the table
@@ -113,6 +147,201 @@ export const EXAMPLE_PROGRAMS: Record<string, string> = {
 30 PRINT "Color "; I; " - Hello World!"
 40 NEXT I
 50 COLOR 7`,
+  // --- Nouveaux exemples ---
+  'Prime Numbers': `10 PRINT "Prime numbers from 2 to 100:"
+20 FOR N = 2 TO 100
+30 P = -1
+40 FOR D = 2 TO INT(SQR(N))
+50 IF N / D = INT(N / D) THEN P = 0
+60 NEXT D
+70 IF P THEN PRINT N; " ";
+80 NEXT N
+90 PRINT`,
+  'Multiplication Table': `10 PRINT TAB(10); "Multiplication Table"
+20 PRINT STRING$(50, "-")
+30 FOR I = 1 TO 10
+40 FOR J = 1 TO 10
+50 PRINT USING "###"; I * J;
+60 NEXT J
+70 PRINT
+80 NEXT I`,
+  'Pi Approximation': `10 PRINT "Approximating Pi using Leibniz series"
+20 P = 0
+30 S = 1
+40 FOR I = 1 TO 10000 STEP 2
+50 P = P + S * (4 / I)
+60 S = -S
+70 NEXT I
+80 PRINT "Pi = "; P
+90 PRINT "Error = "; ABS(P - 3.1415926535)`,
+  'Factorial': `10 INPUT "Enter a number: "; N
+20 F = 1
+30 FOR I = 1 TO N
+40 F = F * I
+50 NEXT I
+60 PRINT "Factorial of "; N; " is "; F`,
+  'Sierpinski Triangle': `10 SCREEN 1
+20 X1 = 160: Y1 = 10
+30 X2 = 10: Y2 = 190
+40 X3 = 310: Y3 = 190
+50 X = 160: Y = 100
+60 FOR I = 1 TO 3000
+70 R = INT(RND * 3) + 1
+80 ON R GOTO 100, 200, 300
+100 X = (X + X1) / 2: Y = (Y + Y1) / 2: GOTO 400
+200 X = (X + X2) / 2: Y = (Y + Y2) / 2: GOTO 400
+300 X = (X + X3) / 2: Y = (Y + Y3) / 2
+400 PSET (X, Y), 10
+410 NEXT I`,
+  'Mastermind': `10 RANDOMIZE TIMER
+20 DIM C(4), G(4)
+30 PRINT "Mastermind - Guess 4 colors (1-6)"
+40 FOR I = 1 TO 4: C(I) = INT(RND * 6) + 1: NEXT I
+50 T = 0
+60 T = T + 1: B = 0: W = 0
+70 PRINT "Guess"; T; ": ";
+80 FOR I = 1 TO 4: G(I) = INT(RND * 6) + 1: PRINT G(I); : NEXT I
+90 PRINT " -> ";
+100 FOR I = 1 TO 4
+110 IF G(I) = C(I) THEN B = B + 1: GOTO 140
+120 FOR J = 1 TO 4
+130 IF I <> J AND G(I) = C(J) AND G(J) <> C(J) THEN W = W + 1: G(J) = 0: GOTO 140
+140 NEXT J
+150 NEXT I
+160 PRINT B; "Black "; W; "White"
+170 IF B = 4 THEN PRINT "Solved in"; T; "turns!" : END
+180 IF T < 20 THEN GOTO 60
+190 PRINT "Too many turns! The code was: ";
+200 FOR I = 1 TO 4: PRINT C(I); : NEXT I`,
+  'Pascal Triangle': `10 INPUT "Number of rows: "; N
+20 FOR I = 0 TO N - 1
+30 PRINT SPC((N - I) * 2);
+40 C = 1
+50 FOR J = 0 TO I
+60 PRINT USING "####"; C;
+70 C = C * (I - J) / (J + 1)
+80 NEXT J
+90 PRINT
+100 NEXT I`,
+  'Chessboard': `10 SCREEN 1
+20 S = 20: REM square size
+30 FOR R = 0 TO 7
+40 FOR C = 0 TO 7
+50 X1 = C * S + 80: Y1 = R * S + 20
+60 X2 = X1 + S: Y2 = Y1 + S
+70 IF (R + C) MOD 2 = 0 THEN L = 15 ELSE L = 0
+80 LINE (X1, Y1)-(X2, Y2), L, BF
+90 NEXT C
+100 NEXT R`,
+  'Sieve of Eratosthenes': `10 DIM P(1000)
+20 FOR I = 2 TO 1000: P(I) = -1: NEXT I
+30 FOR I = 2 TO INT(SQR(1000))
+40 IF P(I) = 0 THEN 70
+50 FOR J = I * I TO 1000 STEP I
+60 P(J) = 0
+70 NEXT J
+80 NEXT I
+90 PRINT "Primes up to 1000:"
+100 C = 0
+110 FOR I = 2 TO 1000
+120 IF P(I) THEN PRINT I; : C = C + 1: IF C MOD 10 = 0 THEN PRINT
+130 NEXT I
+140 PRINT : PRINT "Total:"; C`,
+  'Collatz Conjecture': `10 INPUT "Enter starting number: "; N
+20 PRINT N;
+30 WHILE N <> 1
+40 IF N / 2 = INT(N / 2) THEN N = N / 2 ELSE N = 3 * N + 1
+50 PRINT " -> "; N;
+60 WEND
+70 PRINT : PRINT "Reached 1!"`,
+  'Data Statistics': `10 DIM D(100)
+20 N = 0: S = 0
+30 READ V
+40 WHILE V <> -9999
+50 D(N) = V: N = N + 1: S = S + V
+60 READ V
+70 WEND
+80 PRINT "Count: "; N
+90 PRINT "Sum: "; S
+100 PRINT "Mean: "; S / N
+110 PRINT "Min: "; MIN(D, N)
+120 PRINT "Max: "; MAX(D, N)
+130 PRINT "Median: "; MEDIAN(D, N)
+140 PRINT "StdDev: "; STDP(D, N)
+150 DATA 12, 45, 67, 23, 89, 34, 56, 78, 90, 11
+160 DATA 22, 33, 44, 55, 66, 77, 88, 99, 10, 20
+170 DATA -9999`,
+  'Matrix Addition': `10 DIM A(3, 3), B(3, 3), C(3, 3)
+20 PRINT "Matrix A:"
+30 FOR I = 0 TO 2
+40 FOR J = 0 TO 2
+50 A(I, J) = INT(RND * 10)
+60 PRINT A(I, J); " ";
+70 NEXT J: PRINT
+80 NEXT I: PRINT
+90 PRINT "Matrix B:"
+100 FOR I = 0 TO 2
+110 FOR J = 0 TO 2
+120 B(I, J) = INT(RND * 10)
+130 PRINT B(I, J); " ";
+140 NEXT J: PRINT
+150 NEXT I: PRINT
+160 PRINT "A + B:"
+170 FOR I = 0 TO 2
+180 FOR J = 0 TO 2
+190 C(I, J) = A(I, J) + B(I, J)
+200 PRINT C(I, J); " ";
+210 NEXT J: PRINT
+220 NEXT I`,
+  'Sorting Demo': `10 DIM A(20)
+20 PRINT "Original array:"
+30 FOR I = 0 TO 19
+40 A(I) = INT(RND * 100)
+50 PRINT A(I); " ";
+60 NEXT I: PRINT
+70 CALL SORT(A, 0, 20)
+80 PRINT "Sorted array:"
+90 FOR I = 0 TO 19
+100 PRINT A(I); " ";
+110 NEXT I: PRINT
+120 CALL INVERT(A, 0, 20)
+130 PRINT "Reversed array:"
+140 FOR I = 0 TO 19
+150 PRINT A(I); " ";
+160 NEXT I: PRINT`,
+  'Digital Clock': `10 CLS
+20 PRINT "Digital Clock (CTRL+C to stop)"
+30 T$ = DATESTR$(MKDATE)
+40 PRINT T$
+50 FOR I = 1 TO 500: NEXT I
+60 GOTO 30`,
+  'Biorhythm': `10 RANDOMIZE TIMER
+20 PRINT "Biorhythm Calculator"
+30 INPUT "Enter your birth year: "; Y
+40 INPUT "Enter your birth month: "; M
+50 INPUT "Enter your birth day: "; D
+60 B = MKDATE(Y, M, D)
+70 T = MKDATE
+80 N = INT((T - B) / 86400)
+90 PRINT : PRINT "Days alive: "; N
+100 PRINT "Physical:  "; INT(50 * SIN(2 * 3.14159 * N / 23) + 50); "%"
+110 PRINT "Emotional: "; INT(50 * SIN(2 * 3.14159 * N / 28) + 50); "%"
+120 PRINT "Intellect: "; INT(50 * SIN(2 * 3.14159 * N / 33) + 50); "%"`,
+  'Clock Animation': `10 SCREEN 1
+20 CLS
+30 C = 160: R = 90: S = 80
+40 CIRCLE (C, R), S, 15
+50 FOR I = 0 TO 11
+60 A = I * 30 * 3.14159 / 180
+70 X = C + COS(A) * (S - 8)
+80 Y = R + SIN(A) * (S - 8)
+90 PSET (X, Y), 15
+100 NEXT I
+110 H = INT(RND * 12): M = INT(RND * 60)
+120 HA = (H + M / 60) * 30 * 3.14159 / 180
+130 MA = M * 6 * 3.14159 / 180
+140 LINE (C, R)-(C + SIN(HA) * 35, R - COS(HA) * 35), 15
+150 LINE (C, R)-(C + SIN(MA) * 55, R - COS(MA) * 55), 15`,
 }
 
 function initCanvasClear(canvas: HTMLCanvasElement) {
@@ -238,6 +467,31 @@ export function useInterpreter() {
   const currentFgColor = ref<number | null>(null)
   const currentBgColor = ref<number | null>(null)
   const lastOutputEndedWithNewline = ref(true)
+
+  // Inspecteur de variables
+  const showVariables = ref(false)
+  const variablesSnapshot = ref<{ name: string; value: string }[]>([])
+
+  function refreshVariables() {
+    const vars: { name: string; value: string }[] = []
+    if (interpreterRef.value) {
+      const allVars = interpreterRef.value.getVariables()
+      allVars.forEach((val: unknown, key: string) => {
+        if (typeof val === 'object' && val !== null && (val as any).dimensions) {
+          // C'est un tableau
+          const arr = val as { dimensions: number[]; data: unknown[] }
+          vars.push({
+            name: key,
+            value: `Array(${arr.dimensions.join(',')}) [${arr.data.slice(0, 10).map(v => String(v)).join(', ')}${arr.data.length > 10 ? ', ...' : ''}]`
+          })
+        } else {
+          vars.push({ name: key, value: String(val) })
+        }
+      })
+      vars.sort((a, b) => a.name.localeCompare(b.name))
+    }
+    variablesSnapshot.value = vars
+  }
 
   // Add output with color support
   function addOutput(text: string, isError: boolean = false) {
@@ -376,6 +630,7 @@ export function useInterpreter() {
 
     isRunning.value = false
     addOutput('\nOk\n')
+    refreshVariables()
   }
 
   function stopProgram() {
@@ -387,6 +642,7 @@ export function useInterpreter() {
       inputResolveRef.value = null
     }
     addOutput('\nBreak\n')
+    refreshVariables()
   }
 
   function clearOutput() {
@@ -397,6 +653,7 @@ export function useInterpreter() {
     interpreterRef.value?.reset()
     if (canvasRef.value) initCanvasClear(canvasRef.value)
     pendingGraphics.value = []
+    variablesSnapshot.value = []
   }
 
   function newProgram() {
@@ -407,6 +664,7 @@ export function useInterpreter() {
     interpreterRef.value?.reset()
     interpreterRef.value?.loadProgram('')
     pendingGraphics.value = []
+    variablesSnapshot.value = []
   }
 
   async function executeDirect(cmd: string) {
@@ -422,6 +680,7 @@ export function useInterpreter() {
     if (!interpreterRef.value?.isRunning()) {
       addOutput('Ok\n')
     }
+    refreshVariables()
   }
 
   function submitInput() {
@@ -477,5 +736,9 @@ export function useInterpreter() {
     getBackgroundColor,
     scrollToBottom,
     processPendingGraphics,
+    // Inspecteur
+    showVariables,
+    variablesSnapshot,
+    refreshVariables,
   }
 }

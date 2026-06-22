@@ -1,6 +1,11 @@
 <script setup lang="ts">
 import { ref, watch, nextTick, onMounted } from 'vue'
-import { useInterpreter, EXAMPLE_PROGRAMS, getTermColor, type TerminalColor, type ActiveTab } from './composables/useInterpreter'
+import {
+  useInterpreter, EXAMPLE_PROGRAMS, getTermColor,
+  saveSourceToLocalStorage, loadSourceFromLocalStorage,
+  saveSplitterPosition, loadSplitterPosition,
+  type TerminalColor
+} from './composables/useInterpreter'
 
 const {
   output,
@@ -11,7 +16,9 @@ const {
   activeTab,
   screenMode,
   terminalColor,
+  // @ts-ignore used in template
   canvasRef,
+  // @ts-ignore used in template
   termRef,
   runProgram,
   stopProgram,
@@ -22,13 +29,33 @@ const {
   getForegroundColor,
   getBackgroundColor,
   scrollToBottom,
+  showVariables,
+  variablesSnapshot,
+  refreshVariables,
 } = useInterpreter()
 
-const source = ref(EXAMPLE_PROGRAMS['Hello World'])
+const source = ref(loadSourceFromLocalStorage() || EXAMPLE_PROGRAMS['Hello World'])
 const selectedExample = ref('Hello World')
 const directCmd = ref('')
+const cmdHistory = ref<string[]>([])
+const cmdHistoryIndex = ref(-1)
 
 const inputEl = ref<HTMLInputElement | null>(null)
+
+// Splitter
+const splitterPos = ref(loadSplitterPosition())
+const isDragging = ref(false)
+
+// File input ref for import
+const fileInputRef = ref<HTMLInputElement | null>(null)
+
+let saveTimeout: ReturnType<typeof setTimeout> | null = null
+watch(source, (val) => {
+  if (saveTimeout) clearTimeout(saveTimeout)
+  saveTimeout = setTimeout(() => {
+    saveSourceToLocalStorage(val)
+  }, 500)
+})
 
 // Auto-scroll terminal on output change
 watch(output, () => {
@@ -39,6 +66,18 @@ watch(output, () => {
 watch(inputMode, (val) => {
   if (val) {
     nextTick(() => inputEl.value?.focus())
+  }
+})
+
+onMounted(() => {
+  // Si on a chargé depuis localStorage, mettre à jour le selectedExample
+  if (source.value) {
+    for (const [name, code] of Object.entries(EXAMPLE_PROGRAMS)) {
+      if (code === source.value) {
+        selectedExample.value = name
+        break
+      }
+    }
   }
 })
 
@@ -67,8 +106,32 @@ function handleExampleSelect(name: string) {
 
 function handleDirectCmd(e: KeyboardEvent) {
   if (e.key === 'Enter' && directCmd.value.trim()) {
-    executeDirect(directCmd.value)
+    const cmd = directCmd.value.trim()
+    cmdHistory.value.push(cmd)
+    cmdHistoryIndex.value = -1
+    executeDirect(cmd)
     directCmd.value = ''
+  } else if (e.key === 'ArrowUp') {
+    if (cmdHistory.value.length > 0) {
+      if (cmdHistoryIndex.value === -1) {
+        cmdHistoryIndex.value = cmdHistory.value.length - 1
+      } else if (cmdHistoryIndex.value > 0) {
+        cmdHistoryIndex.value--
+      }
+      directCmd.value = cmdHistory.value[cmdHistoryIndex.value]
+    }
+    e.preventDefault()
+  } else if (e.key === 'ArrowDown') {
+    if (cmdHistoryIndex.value >= 0) {
+      cmdHistoryIndex.value++
+      if (cmdHistoryIndex.value >= cmdHistory.value.length) {
+        cmdHistoryIndex.value = -1
+        directCmd.value = ''
+      } else {
+        directCmd.value = cmdHistory.value[cmdHistoryIndex.value]
+      }
+    }
+    e.preventDefault()
   }
 }
 
@@ -83,6 +146,68 @@ function setTermColor(c: TerminalColor) {
 }
 
 const termColor = () => getTermColor(terminalColor.value)
+
+// Export .BAS
+function exportProgram() {
+  if (!source.value.trim()) return
+  const blob = new Blob([source.value], { type: 'text/plain' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'program.bas'
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+// Import .BAS
+function importProgram(e: Event) {
+  const input = e.target as HTMLInputElement
+  if (!input.files?.length) return
+  const file = input.files[0]
+  const reader = new FileReader()
+  reader.onload = (ev) => {
+    const content = ev.target?.result as string
+    if (content) {
+      source.value = content
+      clearOutput()
+    }
+  }
+  reader.readAsText(file)
+  input.value = '' // reset
+}
+
+function triggerImport() {
+  fileInputRef.value?.click()
+}
+
+// Splitter drag handlers
+function startDrag(e: MouseEvent) {
+  isDragging.value = true
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+  document.addEventListener('mousemove', onDrag)
+  document.addEventListener('mouseup', stopDrag)
+  e.preventDefault()
+}
+
+function onDrag(e: MouseEvent) {
+  if (!isDragging.value) return
+  const container = document.getElementById('split-container')
+  if (!container) return
+  const rect = container.getBoundingClientRect()
+  let pct = ((e.clientX - rect.left) / rect.width) * 100
+  pct = Math.max(20, Math.min(80, pct))
+  splitterPos.value = pct
+  saveSplitterPosition(pct)
+}
+
+function stopDrag() {
+  isDragging.value = false
+  document.body.style.cursor = ''
+  document.body.style.userSelect = ''
+  document.removeEventListener('mousemove', onDrag)
+  document.removeEventListener('mouseup', stopDrag)
+}
 </script>
 
 <template>
@@ -118,10 +243,10 @@ const termColor = () => getTermColor(terminalColor.value)
       </div>
     </header>
 
-    <!-- Main content -->
-    <div class="flex-1 flex flex-col lg:flex-row gap-0">
+    <!-- Main content with splitter -->
+    <div id="split-container" class="flex-1 flex flex-row" style="overflow: hidden;">
       <!-- Editor panel -->
-      <div class="flex-1 flex flex-col border-b lg:border-b-0 lg:border-r border-[#333355]" style="min-height: 200px">
+      <div class="flex flex-col border-r border-[#333355]" :style="{ width: splitterPos + '%', minWidth: '200px' }">
         <!-- Toolbar -->
         <div class="flex items-center gap-2 px-3 py-2 border-b border-[#333355] flex-wrap"
           style="background-color: #0f0f2a">
@@ -145,9 +270,44 @@ const termColor = () => getTermColor(terminalColor.value)
             style="background-color: #5c5c1a; color: #FFFF55; border: 1px solid #FFFF55">
             NEW
           </button>
+          <!-- Export / Import buttons -->
+          <button @click="exportProgram"
+            class="px-3 py-1.5 text-xs font-mono font-bold rounded transition-all hover:scale-105"
+            style="background-color: #1a5c5c; color: #55FFFF; border: 1px solid #55FFFF">
+            ⬇ EXP
+          </button>
+          <button @click="triggerImport"
+            class="px-3 py-1.5 text-xs font-mono font-bold rounded transition-all hover:scale-105"
+            style="background-color: #5c1a5c; color: #FF55FF; border: 1px solid #FF55FF">
+            ⬆ IMP
+          </button>
+          <!-- Variables inspector toggle -->
+          <button @click="showVariables = !showVariables"
+            class="px-3 py-1.5 text-xs font-mono font-bold rounded transition-all hover:scale-105"
+            :style="showVariables ? { backgroundColor: '#5c5c1a', color: '#FFFF55', border: '1px solid #FFFF55' } : { backgroundColor: '#1a1a5c', color: '#5555FF', border: '1px solid #5555FF' }">
+            {{ showVariables ? '▼ VARS' : '▶ VARS' }}
+          </button>
           <span v-if="isRunning" class="text-xs font-mono text-[#33FF33] animate-pulse ml-2">
             ● RUNNING
           </span>
+        </div>
+
+        <!-- Variables inspector panel -->
+        <div v-if="showVariables" class="border-b border-[#333355] overflow-y-auto"
+          style="background-color: #080818; max-height: 200px">
+          <div class="px-3 py-2 text-xs font-mono text-gray-400 border-b border-[#222244]">
+            Variables Inspector
+            <button @click="refreshVariables" class="ml-2 text-[#55FF55] hover:underline">↻</button>
+            <span class="text-gray-600 ml-2">{{ variablesSnapshot.length }} vars</span>
+          </div>
+          <div v-if="variablesSnapshot.length === 0" class="px-3 py-2 text-[10px] font-mono text-gray-600 italic">
+            No variables (run a program first)
+          </div>
+          <div v-for="v in variablesSnapshot" :key="v.name"
+            class="px-3 py-1 flex items-center gap-2 hover:bg-[#0a0a2a] border-b border-[#111133]">
+            <span class="text-[10px] font-mono text-[#55FF55] font-bold">{{ v.name }}</span>
+            <span class="text-[10px] font-mono text-gray-300 truncate flex-1">{{ v.value }}</span>
+          </div>
         </div>
 
         <!-- Code Editor -->
@@ -168,8 +328,17 @@ const termColor = () => getTermColor(terminalColor.value)
         </div>
       </div>
 
+      <!-- Splitter handle -->
+      <div
+        class="w-1.5 bg-[#222244] cursor-col-resize hover:bg-[#33FF33] transition-colors flex-shrink-0 relative"
+        @mousedown="startDrag">
+        <div class="absolute inset-0 flex items-center justify-center">
+          <div class="w-0.5 h-6 bg-[#555577] rounded"></div>
+        </div>
+      </div>
+
       <!-- Output panel -->
-      <div class="flex-1 flex flex-col" style="min-height: 200px">
+      <div class="flex flex-col" :style="{ flex: '1', minWidth: '200px' }">
         <!-- Output tabs -->
         <div class="flex items-center gap-1 px-3 py-1 border-b border-[#333355]" style="background-color: #0f0f2a">
           <button v-for="tab in (['output', 'graphics'] as const)" :key="tab" @click="activeTab = tab"
@@ -219,13 +388,19 @@ const termColor = () => getTermColor(terminalColor.value)
       </div>
     </div>
 
+    <!-- Hidden file input for import -->
+    <input ref="fileInputRef" type="file" accept=".bas,.txt" class="hidden" @change="importProgram" />
+
     <!-- Direct command bar -->
     <div class="flex items-center gap-2 px-4 py-2 border-t border-[#333355]" style="background-color: #0f0f2a">
-      <span class="text-xs font-mono text-gray-500">CMD&gt;</span>
+      <span class="text-xs font-mono text-gray-500">CMD></span>
       <input v-model="directCmd" type="text"
         class="flex-1 bg-[#0a0a1a] text-sm font-mono px-3 py-1.5 border border-[#333355] rounded outline-none focus:border-[#33FF33] min-w-0"
         :style="{ color: termColor() }" placeholder="Enter direct command (RUN, LIST, NEW, CLS, or BASIC statements)..."
         :disabled="isRunning || inputMode" @keydown="handleDirectCmd" />
+      <span v-if="cmdHistory.length > 0" class="text-[10px] font-mono text-gray-600 hidden sm:inline">
+        {{ cmdHistory.length }} cmds
+      </span>
     </div>
 
     <!-- Status bar -->
