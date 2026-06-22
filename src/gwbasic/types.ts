@@ -17,7 +17,7 @@ export const TokenType = {
   BEEP: 50, SOUND: 51, PLAY: 52,
   DEF: 53, FN: 54, SUB: 55, FUNCTION: 56, CALL: 57,
   OPEN: 58, CLOSE: 59, WRITE: 60, GET: 61, PUT: 62,
-  ON: 63, ERROR: 64, RESUME: 65,
+  ON: 63, ERROR: 64, RESUME: 65, RENUM: 148,
   SWAP: 66, RANDOMIZE: 67, TIMER: 68,
   INKEY: 69, CHR_DOLLAR: 70, STR_DOLLAR: 71, VAL: 72, ASC_FUNC: 73,
   LEN_FUNC: 74, LEFT_DOLLAR: 75, RIGHT_DOLLAR: 76, MID_DOLLAR: 77,
@@ -38,6 +38,18 @@ export const TokenType = {
   MIN_FUNC: 134, MAX_FUNC: 135, VARIP_FUNC: 136, STDP_FUNC: 137, MEDIAN_FUNC: 138,
   // Array Functions
   FIND_FUNC: 139,
+  // Base conversion functions
+  OCT_DOLLAR: 140,
+  HEX_DOLLAR: 141,
+  BIN_DOLLAR: 142,
+  // Statistical functions
+  PERCENTILE_FUNC: 143,
+  // String functions
+  INSTRI_FUNC: 144,
+  SPLIT_DOLLAR: 145,
+  // Array functions
+  CONCAT_FUNC: 146,
+  BSEARCH_FUNC: 147,
   // Operators
   Plus: 99, Minus: 100, Star: 101, Slash: 102, BackSlash: 103, Caret: 104,
   Eq: 105, Ne: 106, Lt: 107, Gt: 108, Le: 109, Ge: 110,
@@ -335,6 +347,29 @@ export interface CallStatement extends ASTNode {
   args: Expression[];
 }
 
+export interface DefFnStatement extends ASTNode {
+  type: 'DefFn';
+  fnName: string;
+  paramName: string;
+  expression: Expression;
+}
+
+export interface OnErrorStatement extends ASTNode {
+  type: 'OnError';
+  targetLine: number;
+}
+
+export interface ResumeStatement extends ASTNode {
+  type: 'Resume';
+  targetLine?: number;
+}
+
+export interface RenumStatement extends ASTNode {
+  type: 'Renum';
+  startLine?: number;
+  step?: number;
+}
+
 export interface MultiStatement extends ASTNode {
   type: 'Multi';
   statements: Statement[];
@@ -378,6 +413,10 @@ export type Statement =
   | OnGosubStatement
   | MidAssignStatement
   | CallStatement
+  | DefFnStatement
+  | OnErrorStatement
+  | ResumeStatement
+  | RenumStatement
   | MultiStatement;
 
 // Interpreter state
@@ -416,10 +455,14 @@ export interface InterpreterState {
   cursorRow: number;
   cursorCol: number;
   lastRandom: number;
+  errorHandlerLine: number | null;
+  lastErrorLine: number | null;
+  lastErrorCode: number;
+  customFunctions: Map<string, { paramName: string; expression: Expression }>;
 }
 
 export interface InterpreterOutput {
-  type: 'print' | 'input' | 'error' | 'clear' | 'color' | 'locate' | 'screen' | 'graphics' | 'beep' | 'info';
+  type: 'print' | 'input' | 'error' | 'clear' | 'color' | 'locate' | 'screen' | 'graphics' | 'beep' | 'info' | 'key';
   value?: string;
   row?: number;
   col?: number;

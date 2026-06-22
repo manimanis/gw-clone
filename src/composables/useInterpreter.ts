@@ -59,21 +59,22 @@ export const EXAMPLE_PROGRAMS: Record<string, string> = {
 50 PRINT SPC(10 - I); STRING$(I * 2 - 1, "*")
 60 NEXT I`,
   'Bubble Sort': `10 DIM A(10)
-20 PRINT "Original array:"
-30 FOR I = 1 TO 10
-40 A(I) = INT(RND * 100)
-50 PRINT A(I); " ";
-60 NEXT I
-70 PRINT
-80 FOR I = 1 TO 9
-90 FOR J = 1 TO 10 - I
-100 IF A(J) > A(J+1) THEN SWAP A(J), A(J+1)
-110 NEXT J
-120 NEXT I
-130 PRINT "Sorted array:"
-140 FOR I = 1 TO 10
-150 PRINT A(I); " ";
-160 NEXT I`,
+20 GOSUB 200
+30 PRINT "Original array:" : GOSUB 300
+40 FOR I = 0 TO 8
+50 FOR J = 0 TO 8 - I
+60 IF A(J) > A(J+1) THEN SWAP A(J), A(J+1)
+70 NEXT J
+80 NEXT I
+90 PRINT "Sorted array:" : GOSUB 300
+100 END
+200 REM Display the table
+210 FOR I = 0 TO 9: A(I) = INT(RND * 100) : NEXT I : PRINT
+220 RETURN
+300 REM Display the table
+310 FOR I = 0 TO 9: PRINT A(I); " "; : NEXT I : PRINT
+320 RETURN
+`,
   'Draw Circles': `10 SCREEN 1
 20 FOR I = 1 TO 15
 30 CIRCLE (160, 100), I * 8, I

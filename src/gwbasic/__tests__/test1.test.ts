@@ -119,7 +119,10 @@ describe('Mes tests - Test1', () => {
 `;
     await interpreter.run(code);
     const variables = interpreter.getVariables();
-    console.log(variables);
     expect(variables.get('A')!.data).toEqual([0,1,2,3,4,5,6,7,8,9]);
   });
+
+  it('On error goto', async () => {
+    
+  })
 });

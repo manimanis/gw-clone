@@ -69,6 +69,7 @@ const KEYWORDS: Record<string, TokenType> = {
   'ON': TokenType.ON,
   'ERROR': TokenType.ERROR,
   'RESUME': TokenType.RESUME,
+  'RENUM': TokenType.RENUM,
   'SWAP': TokenType.SWAP,
   'RANDOMIZE': TokenType.RANDOMIZE,
   'TIMER': TokenType.TIMER,
@@ -126,8 +127,18 @@ const KEYWORDS: Record<string, TokenType> = {
   'VARIP': TokenType.VARIP_FUNC,
   'STDP': TokenType.STDP_FUNC,
   'MEDIAN': TokenType.MEDIAN_FUNC,
+  'PERCENTILE': TokenType.PERCENTILE_FUNC,
   // Array functions
   'FIND': TokenType.FIND_FUNC,
+  'CONCAT': TokenType.CONCAT_FUNC,
+  'BSEARCH': TokenType.BSEARCH_FUNC,
+  // Base conversion functions
+  'OCT$': TokenType.OCT_DOLLAR,
+  'HEX$': TokenType.HEX_DOLLAR,
+  'BIN$': TokenType.BIN_DOLLAR,
+  // String functions
+  'INSTRI': TokenType.INSTRI_FUNC,
+  'SPLIT$': TokenType.SPLIT_DOLLAR,
 };
 
 export class Lexer {

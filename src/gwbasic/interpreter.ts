@@ -11,6 +11,7 @@ import type {
   ScreenStatement, PsetStatement, LineStatement, CircleStatement, DrawStatement,
   PaintStatement, BeepStatement, SoundStatement, PokeStatement,
   OnGotoStatement, OnGosubStatement, MidAssignStatement, CallStatement,
+  DefFnStatement, OnErrorStatement, ResumeStatement, RenumStatement,
   InterpreterOutput, GraphicsCommand, ASTNode,
 } from './types';
 import { Lexer } from './lexer';
@@ -43,6 +44,11 @@ export class GWBasicInterpreter {
   private sourceLines: Map<number, string> = new Map();
   private currentLineNum: number = 0;
   private currentColNum: number = 0;
+  private errorHandlerLine: number | null = null;
+  private lastErrorLine: number | null = null;
+  private lastErrorCode: number = 0;
+  private customFunctions: Map<string, { paramName: string; expression: Expression }> = new Map();
+  private keyBuffer: string = '';
 
   private outputCallback: OutputCallback;
   private inputCallback: InputCallback;
@@ -272,17 +278,34 @@ export class GWBasicInterpreter {
       this.currentLineNum = (stmt as any).line || 0;
       this.currentColNum = (stmt as any).col || 0;
 
-      // Track the pc before executing the statement
-      // so we can detect if it was modified by a jump (GOTO, WHILE/WEND, etc.)
-      const pcBefore = this.pc;
-      await this.executeStatement(stmt);
-      const pcAfter = this.pc;
+      try {
+        // Track the pc before executing the statement
+        // so we can detect if it was modified by a jump (GOTO, WHILE/WEND, etc.)
+        const pcBefore = this.pc;
+        await this.executeStatement(stmt);
+        const pcAfter = this.pc;
 
-      // If the statement modified pc (e.g., GOTO, WEND looping back),
-      // we've already jumped, so continue from the new pc
-      if (pcAfter === pcBefore) {
-        // No jump, advance to next instruction
-        this.pc++;
+        // If the statement modified pc (e.g., GOTO, WEND looping back),
+        // we've already jumped, so continue from the new pc
+        if (pcAfter === pcBefore) {
+          // No jump, advance to next instruction
+          this.pc++;
+        }
+      } catch (e: unknown) {
+        const err = e as Error;
+        // Check if there's an error handler
+        if (this.errorHandlerLine !== null) {
+          // Jump to error handler
+          this.lastErrorLine = this.currentLineNum;
+          this.lastErrorCode = 1; // Generic error code
+          const targetPc = this.findPcByLine(this.errorHandlerLine);
+          if (targetPc !== -1) {
+            this.pc = targetPc;
+            continue;
+          }
+        }
+        // No error handler, throw the error
+        throw err;
       }
     }
 
@@ -341,6 +364,10 @@ export class GWBasicInterpreter {
       case 'OnGosub': await this.execOnGosub(stmt as OnGosubStatement); break;
       case 'MidAssign': this.execMidAssign(stmt as MidAssignStatement); break;
       case 'Call': this.execCall(stmt as CallStatement); break;
+      case 'DefFn': this.execDefFn(stmt as DefFnStatement); break;
+      case 'OnError': this.execOnError(stmt as OnErrorStatement); break;
+      case 'Resume': this.execResume(stmt as ResumeStatement); break;
+      case 'Renum': this.execRenum(stmt as RenumStatement); break;
     }
   }
 
@@ -362,6 +389,25 @@ export class GWBasicInterpreter {
   }
 
   private getVariable(ref: VariableRef): unknown {
+    // Check if it's a custom function call (DEF FN)
+    if (this.customFunctions.has(ref.name) && ref.indices.length > 0) {
+      const customFn = this.customFunctions.get(ref.name)!;
+      const arg = this.evalExpr(ref.indices[0]);
+      // Save current value of parameter
+      const paramValue = this.variables.get(customFn.paramName);
+      // Set parameter value
+      this.variables.set(customFn.paramName, arg);
+      // Evaluate expression
+      const result = this.evalExpr(customFn.expression);
+      // Restore parameter
+      if (paramValue !== undefined) {
+        this.variables.set(customFn.paramName, paramValue);
+      } else {
+        this.variables.delete(customFn.paramName);
+      }
+      return result;
+    }
+    
     if (!this.variables.has(ref.name)) {
       throw new Error(`Variable ${ref.name} not declared`);
     }
@@ -511,6 +557,24 @@ export class GWBasicInterpreter {
 
   private evalFunctionCall(func: FunctionCall): unknown {
     const args = func.args.map(a => this.evalExpr(a));
+
+    // Check custom functions first (DEF FN)
+    if (this.customFunctions.has(func.name)) {
+      const customFn = this.customFunctions.get(func.name)!;
+      // Save current value of parameter
+      const paramValue = this.variables.get(customFn.paramName);
+      // Set parameter value
+      this.variables.set(customFn.paramName, args[0] || 0);
+      // Evaluate expression
+      const result = this.evalExpr(customFn.expression);
+      // Restore parameter
+      if (paramValue !== undefined) {
+        this.variables.set(customFn.paramName, paramValue);
+      } else {
+        this.variables.delete(customFn.paramName);
+      }
+      return result;
+    }
 
     switch (func.name) {
       case 'ABS': return Math.abs(this.toNumber(args[0]));
@@ -864,8 +928,126 @@ export class GWBasicInterpreter {
         }
         return -1; // Not found
       }
+      // Base conversion functions
+      case 'OCT$': {
+        const n = Math.floor(this.toNumber(args[0]));
+        return n.toString(8).toUpperCase();
+      }
+      case 'HEX$': {
+        const n = Math.floor(this.toNumber(args[0]));
+        return n.toString(16).toUpperCase();
+      }
+      case 'BIN$': {
+        const n = Math.floor(this.toNumber(args[0]));
+        return n.toString(2);
+      }
+      // Statistical functions
+      case 'PERCENTILE': {
+        if (args.length >= 3 && typeof args[1] === 'number' && func.args[0].type === 'VariableRef') {
+          // PERCENTILE(array, n, p) - percentile of n elements from array at position p (0-100)
+          const arrName = (func.args[0] as VariableRef).name;
+          const n = Math.floor(this.toNumber(args[1]));
+          const p = this.toNumber(args[2]) / 100;
+          const values: number[] = [];
+          for (let i = 0; i < n; i++) {
+            const idxExpr = { type: 'NumberLiteral', value: i } as any;
+            values.push(this.toNumber(this.getArrayElement(arrName, [idxExpr])));
+          }
+          values.sort((a, b) => a - b);
+          const index = Math.floor(p * (values.length - 1));
+          return values[index];
+        }
+        // PERCENTILE(a1, a2, a3, ..., p)
+        if (args.length >= 2) {
+          const p = this.toNumber(args[args.length - 1]) / 100;
+          const values = args.slice(0, -1).map(a => this.toNumber(a));
+          values.sort((a, b) => a - b);
+          const index = Math.floor(p * (values.length - 1));
+          return values[index];
+        }
+        return 0;
+      }
+      // String functions
+      case 'INSTRI': {
+        const haystack = this.toString(args.length > 2 ? args[1] : args[0]);
+        const needle = this.toString(args.length > 2 ? args[2] : args[1]);
+        const start = args.length > 2 ? Math.floor(this.toNumber(args[0])) - 1 : 0;
+        const idx = haystack.toLowerCase().indexOf(needle.toLowerCase(), start);
+        return idx === -1 ? 0 : idx + 1;
+      }
+      case 'SPLIT$': {
+        const str = this.toString(args[0]);
+        const delimiter = args.length > 1 ? this.toString(args[1]) : ',';
+        const parts = str.split(delimiter);
+        // Return as a GW-BASIC-style array object
+        return {
+          dimensions: [parts.length],
+          data: parts
+        };
+      }
+      // Array functions
+      case 'CONCAT': {
+        if (func.args.length >= 2 && func.args[0].type === 'VariableRef' && func.args[1].type === 'VariableRef') {
+          // CONCAT(arr1, arr2, n1, n2) - concatenate n1 elements from arr1 and n2 elements from arr2
+          const arr1Name = (func.args[0] as VariableRef).name;
+          const arr2Name = (func.args[1] as VariableRef).name;
+          const n1 = args.length > 2 ? Math.floor(this.toNumber(args[2])) : this.getArrayLength(arr1Name);
+          const n2 = args.length > 3 ? Math.floor(this.toNumber(args[3])) : this.getArrayLength(arr2Name);
+          const result: unknown[] = [];
+          for (let i = 0; i < n1; i++) {
+            const idxExpr = { type: 'NumberLiteral', value: i } as any;
+            result.push(this.getArrayElement(arr1Name, [idxExpr]));
+          }
+          for (let i = 0; i < n2; i++) {
+            const idxExpr = { type: 'NumberLiteral', value: i } as any;
+            result.push(this.getArrayElement(arr2Name, [idxExpr]));
+          }
+          // Return as a GW-BASIC-style array object
+          return {
+            dimensions: [result.length],
+            data: result
+          };
+        }
+        return {
+          dimensions: [0],
+          data: []
+        };
+      }
+      case 'BSEARCH': {
+        if (func.args.length < 3 || func.args[1].type !== 'VariableRef') {
+          return -1;
+        }
+        const val = args[0];
+        const arrName = (func.args[1] as VariableRef).name;
+        const count = Math.floor(this.toNumber(args[2]));
+        const values: number[] = [];
+        for (let i = 0; i < count; i++) {
+          const idxExpr = { type: 'NumberLiteral', value: i } as any;
+          values.push(this.toNumber(this.getArrayElement(arrName, [idxExpr])));
+        }
+        // Binary search requires sorted array
+        let left = 0;
+        let right = values.length - 1;
+        while (left <= right) {
+          const mid = Math.floor((left + right) / 2);
+          if (values[mid] === this.toNumber(val)) {
+            return mid;
+          } else if (values[mid] < this.toNumber(val)) {
+            left = mid + 1;
+          } else {
+            right = mid - 1;
+          }
+        }
+        return -1; // Not found
+      }
       default: return 0;
     }
+  }
+
+  private getArrayLength(name: string): number {
+    const arr = this.variables.get(name);
+    if (!arr || !arr.dimensions) return 0;
+    return arr.dimensions.reduce((a: number, b: number) => a * b, 1);
   }
 
   // Statement executors
@@ -1157,6 +1339,7 @@ export class GWBasicInterpreter {
 
   private execDim(stmt: DimStatement): void {
     for (const dim of stmt.dimensions) {
+      // In GW-BASIC, DIM A(5) creates A(0) to A(5), so size is bound + 1
       const bounds = dim.bounds.map(b => Math.floor(this.toNumber(this.evalExpr(b))));
       const totalSize = bounds.reduce((a, b) => a * b, 1);
       const isString = dim.name.endsWith('$');
@@ -1431,6 +1614,72 @@ export class GWBasicInterpreter {
     }
   }
 
+  private execDefFn(stmt: DefFnStatement): void {
+    this.customFunctions.set(stmt.fnName, {
+      paramName: stmt.paramName,
+      expression: stmt.expression,
+    });
+  }
+
+  private execOnError(stmt: OnErrorStatement): void {
+    this.errorHandlerLine = stmt.targetLine;
+  }
+
+  private execResume(_stmt: ResumeStatement): void {
+    if (this.lastErrorLine !== null) {
+      // RESUME retourne à la ligne qui a causé l'erreur
+      this.pc = this.findPcByLine(this.lastErrorLine);
+      if (this.pc === -1) {
+        throw new Error(`Undefined error line ${this.lastErrorLine}`);
+      }
+      // Clear error handler
+      this.errorHandlerLine = null;
+      this.lastErrorLine = null;
+    } else {
+      throw new Error('RESUME without ON ERROR');
+    }
+  }
+
+  private execRenum(_stmt: RenumStatement): void {
+    const startLine = _stmt.startLine || 10;
+    const step = _stmt.step || 10;
+    const newLineNumbers: number[] = [];
+    let currentNewLine = startLine;
+
+    // Create new line numbers
+    for (let i = 0; i < this.lineNumbers.length; i++) {
+      newLineNumbers.push(currentNewLine);
+      currentNewLine += step;
+    }
+
+    // Rebuild program with new line numbers
+    const newProgram = new Map<number, Statement[]>();
+    const newSourceLines = new Map<number, string>();
+    const newFlatProgram: Statement[] = [];
+
+    for (let i = 0; i < this.lineNumbers.length; i++) {
+      const oldLineNum = this.lineNumbers[i];
+      const newLineNum = newLineNumbers[i];
+      const stmts = this.program.get(oldLineNum);
+      if (stmts) {
+        newProgram.set(newLineNum, stmts);
+        const src = this.sourceLines.get(oldLineNum);
+        if (src) {
+          newSourceLines.set(newLineNum, src);
+        }
+        for (const stmt of stmts) {
+          (stmt as any).line = newLineNum;
+          newFlatProgram.push(stmt);
+        }
+      }
+    }
+
+    this.program = newProgram;
+    this.sourceLines = newSourceLines;
+    this.flatProgram = newFlatProgram;
+    this.lineNumbers = Array.from(this.program.keys()).sort((a, b) => a - b);
+  }
+
   private output(out: InterpreterOutput): void {
     this.outputCallback(out);
   }
@@ -1466,6 +1715,18 @@ export class GWBasicInterpreter {
     }
     if (upper === 'SYSTEM') {
       this.output({ type: 'info', value: 'Cannot exit browser environment.\n' });
+      return;
+    }
+    if (upper.startsWith('RENUM')) {
+      const lexer = new Lexer(source);
+      const tokens = lexer.tokenize();
+      const parser = new Parser(tokens);
+      const stmts = parser.parseProgram();
+      for (const stmt of stmts) {
+        if (stmt.type === 'Renum') {
+          this.execRenum(stmt as any);
+        }
+      }
       return;
     }
 

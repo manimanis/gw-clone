@@ -13,6 +13,7 @@ import type {
   ScreenStatement, PsetStatement, LineStatement, CircleStatement, DrawStatement,
   PaintStatement, BeepStatement, SoundStatement, PokeStatement,
   OnGotoStatement, OnGosubStatement, MultiStatement, CaseBlock,
+  DefFnStatement, OnErrorStatement, ResumeStatement, RenumStatement,
 } from './types';
 
 export class Parser {
@@ -55,8 +56,11 @@ export class Parser {
           program.push(stmt);
         }
       } else {
-        // Direct statement (no line number) - skip
-        this.skipToEol();
+        // Direct statement (no line number) - parse it
+        const stmts = this.parseLineStatements();
+        for (const stmt of stmts) {
+          program.push(stmt);
+        }
       }
     }
 
@@ -131,6 +135,10 @@ export class Parser {
       case TokenType.MID_DOLLAR: stmt = this.parseMidAssign(); break;
 
       case TokenType.CALL: stmt = this.parseCall(); break;
+      case TokenType.DEF: stmt = this.parseDefFn(); break;
+      case TokenType.ERROR: stmt = this.parseOnError(); break;
+      case TokenType.RESUME: stmt = this.parseResume(); break;
+      case TokenType.RENUM: stmt = this.parseRenum(); break;
 
       // Implicit LET: identifier followed by = or (
       case TokenType.Identifier:
@@ -308,8 +316,13 @@ export class Parser {
       // Statistical functions
       TokenType.SUM_FUNC, TokenType.AVG_FUNC, TokenType.SUMPROD_FUNC, TokenType.AVGP_FUNC,
       TokenType.MIN_FUNC, TokenType.MAX_FUNC, TokenType.VARIP_FUNC, TokenType.STDP_FUNC, TokenType.MEDIAN_FUNC,
+      TokenType.PERCENTILE_FUNC,
       // Array functions
-      TokenType.FIND_FUNC,
+      TokenType.FIND_FUNC, TokenType.CONCAT_FUNC, TokenType.BSEARCH_FUNC,
+      // Base conversion functions
+      TokenType.OCT_DOLLAR, TokenType.HEX_DOLLAR, TokenType.BIN_DOLLAR,
+      // String functions
+      TokenType.INSTRI_FUNC, TokenType.SPLIT_DOLLAR,
     ];
 
     if (funcTypes.includes(token.type)) {
@@ -1158,6 +1171,50 @@ export class Parser {
     }
 
     return { type: 'Call', subName, args } as any;
+  }
+
+  private parseDefFn(): Statement {
+    this.advance(); // skip DEF
+    this.expect(TokenType.FN);
+    const fnName = this.current().value;
+    this.advance();
+    this.expect(TokenType.LParen);
+    const paramName = this.current().value;
+    this.advance();
+    this.expect(TokenType.RParen);
+    this.expect(TokenType.Eq);
+    const expression = this.parseExpression();
+    return { type: 'DefFn', fnName, paramName, expression } as DefFnStatement;
+  }
+
+  private parseOnError(): Statement {
+    this.advance(); // skip ON
+    this.expect(TokenType.ERROR);
+    this.expect(TokenType.GOTO);
+    const targetLine = Math.floor(parseFloat(this.current().value));
+    this.advance();
+    return { type: 'OnError', targetLine } as OnErrorStatement;
+  }
+
+  private parseResume(): Statement {
+    this.advance(); // skip RESUME
+    return { type: 'Resume' } as ResumeStatement;
+  }
+
+  private parseRenum(): Statement {
+    this.advance(); // skip RENUM
+    let startLine: number | undefined;
+    let step: number | undefined;
+    if (this.current().type === TokenType.Number) {
+      startLine = Math.floor(parseFloat(this.current().value));
+      this.advance();
+      if (this.current().type === TokenType.Comma) {
+        this.advance();
+        step = Math.floor(parseFloat(this.current().value));
+        this.advance();
+      }
+    }
+    return { type: 'Renum', startLine, step } as RenumStatement;
   }
 
   // Utility methods
