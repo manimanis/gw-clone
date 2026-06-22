@@ -18,6 +18,7 @@ import { Parser } from './parser';
 
 export type OutputCallback = (output: InterpreterOutput) => void;
 export type InputCallback = () => Promise<string>;
+export type StepCallback = (lineNum: number) => void;
 
 export class GWBasicInterpreter {
   private variables: Map<string, any> = new Map();
@@ -47,6 +48,14 @@ export class GWBasicInterpreter {
   private lastErrorLine: number | null = null;
   private lastErrorCode: number = 0;
   private customFunctions: Map<string, { paramName: string; expression: Expression }> = new Map();
+  private originalSource: string = '';
+  private lineNumberMap: Map<number, number> = new Map();
+
+  // Step mode support
+  private stepMode: boolean = false;
+  private stepResolve: (() => void) | null = null;
+  private stepCallback: StepCallback | null = null;
+  private physicalLineNum: number = 0;
 
   private outputCallback: OutputCallback;
   private inputCallback: InputCallback;
@@ -70,6 +79,7 @@ export class GWBasicInterpreter {
         }
         seenLineNumbers.add(lineNum);
         this.sourceLines.set(lineNum, match[2]);
+        this.lineNumberMap.set(lineNum, curLine);
       }
       curLine++;
     }
@@ -78,6 +88,8 @@ export class GWBasicInterpreter {
   // Load a program from source text
   loadProgram(source: string): void {
     this.sourceLines.clear();
+    this.lineNumberMap.clear();
+    this.originalSource = source;
     const lines = source.split('\n');
 
     this.verifyLineNumbers(lines);
@@ -289,6 +301,9 @@ export class GWBasicInterpreter {
           // No jump, advance to next instruction
           this.pc++;
         }
+
+        // In step mode, pause after each statement
+        await this.stepPause();
       } catch (e: unknown) {
         const err = e as Error;
         // Check if there's an error handler
@@ -1844,5 +1859,39 @@ export class GWBasicInterpreter {
 
   isRunning(): boolean {
     return this.running;
+  }
+
+  /** Retourne la position physique (1-indexée) d'une ligne GW-BASIC dans le source */
+  getPhysicalLine(gwLineNum: number): number {
+    return this.lineNumberMap.get(gwLineNum) ?? -1;
+  }
+
+  // === STEP MODE SUPPORT ===
+
+  setStepMode(enable: boolean): void {
+    this.stepMode = enable;
+  }
+
+  setStepCallback(callback: StepCallback): void {
+    this.stepCallback = callback;
+  }
+
+  /** Resolves the current step pause, allowing one statement to execute */
+  stepForward(): void {
+    if (this.stepResolve) {
+      const resolve = this.stepResolve;
+      this.stepResolve = null;
+      resolve();
+    }
+  }
+
+  /** Called after each statement in step mode to pause execution */
+  private async stepPause(): Promise<void> {
+    if (this.stepMode && this.stepCallback) {
+      this.stepCallback(this.currentLineNum);
+      return new Promise<void>((resolve) => {
+        this.stepResolve = resolve;
+      });
+    }
   }
 }

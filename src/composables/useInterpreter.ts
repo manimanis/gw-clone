@@ -455,6 +455,10 @@ export function useInterpreter() {
   const inputPrompt = ref('')
   const currentInput = ref('')
   const isRunning = ref(false)
+  const isStepMode = ref(false)
+  const isStepping = ref(false)
+  const currentLineNum = ref(0)
+  const currentPhysicalLine = ref(0)
   const activeTab: Ref<ActiveTab> = ref('output')
   const screenMode = ref(0)
   const terminalColor: Ref<TerminalColor> = ref('green')
@@ -606,21 +610,63 @@ export function useInterpreter() {
       })
     }
 
+    // Set up step mode callback
     interpreterRef.value = new GWBasicInterpreter(outputCallback, inputCallback)
+    interpreterRef.value.setStepCallback((lineNum: number) => {
+      currentLineNum.value = lineNum
+      // Calculer la ligne physique correspondante
+      const physLine = interpreterRef.value!.getPhysicalLine(lineNum)
+      currentPhysicalLine.value = physLine > 0 ? physLine : 0
+      isStepping.value = true
+      refreshVariables()
+    })
   }
 
   // Initialize on first call
   initInterpreter()
 
-  async function runProgram(source: string) {
+  function enableStepMode() {
+    isStepMode.value = true
+    interpreterRef.value?.setStepMode(true)
+  }
+
+  function disableStepMode() {
+    isStepMode.value = false
+    isStepping.value = false
+    interpreterRef.value?.setStepMode(false)
+  }
+
+  function stepForward() {
+    if (interpreterRef.value && isStepping.value) {
+      isStepping.value = false
+      interpreterRef.value.stepForward()
+    }
+  }
+
+  function continueExecution() {
+    if (interpreterRef.value && isStepping.value) {
+      isStepping.value = false
+      // Disable step mode for continue (run to completion)
+      interpreterRef.value.setStepMode(false)
+      interpreterRef.value.stepForward()
+    }
+  }
+
+  async function runProgram(source: string, stepMode: boolean = false) {
     if (isRunning.value) return
     isRunning.value = true
+    isStepping.value = false
+    currentLineNum.value = 0
     output.value = []
     inputMode.value = false
     pendingGraphics.value = []
     currentFgColor.value = null
     lastOutputEndedWithNewline.value = true
     activeTab.value = screenMode.value === 1 ? 'graphics' : 'output'
+
+    if (stepMode) {
+      enableStepMode()
+    }
 
     try {
       await interpreterRef.value?.run(source)
@@ -629,13 +675,21 @@ export function useInterpreter() {
     }
 
     isRunning.value = false
+    isStepping.value = false
     addOutput('\nOk\n')
+    if (isStepMode.value) {
+      disableStepMode()
+    }
     refreshVariables()
   }
 
   function stopProgram() {
     interpreterRef.value?.stop()
+    if (isStepping.value && interpreterRef.value) {
+      interpreterRef.value.stepForward() // unblock the step pause
+    }
     isRunning.value = false
+    isStepping.value = false
     inputMode.value = false
     if (inputResolveRef.value) {
       inputResolveRef.value('')
@@ -654,6 +708,9 @@ export function useInterpreter() {
     if (canvasRef.value) initCanvasClear(canvasRef.value)
     pendingGraphics.value = []
     variablesSnapshot.value = []
+    isStepMode.value = false
+    isStepping.value = false
+    currentLineNum.value = 0
   }
 
   function newProgram() {
@@ -665,6 +722,9 @@ export function useInterpreter() {
     interpreterRef.value?.loadProgram('')
     pendingGraphics.value = []
     variablesSnapshot.value = []
+    isStepMode.value = false
+    isStepping.value = false
+    currentLineNum.value = 0
   }
 
   async function executeDirect(cmd: string) {
@@ -721,6 +781,10 @@ export function useInterpreter() {
     inputPrompt,
     currentInput,
     isRunning,
+    isStepMode,
+    isStepping,
+    currentLineNum,
+    currentPhysicalLine,
     activeTab,
     screenMode,
     terminalColor,
@@ -740,5 +804,10 @@ export function useInterpreter() {
     showVariables,
     variablesSnapshot,
     refreshVariables,
+    // Step mode
+    enableStepMode,
+    disableStepMode,
+    stepForward,
+    continueExecution,
   }
 }

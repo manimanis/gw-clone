@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, watch, nextTick, onMounted } from 'vue'
+import { ref, watch, nextTick, onMounted, computed } from 'vue'
+import FloatingWindow from './components/FloatingWindow.vue'
 import {
   useInterpreter, EXAMPLE_PROGRAMS, getTermColor,
   saveSourceToLocalStorage, loadSourceFromLocalStorage,
@@ -13,6 +14,10 @@ const {
   inputPrompt,
   currentInput,
   isRunning,
+  isStepMode,
+  isStepping,
+  currentLineNum,
+  currentPhysicalLine,
   activeTab,
   screenMode,
   terminalColor,
@@ -32,6 +37,10 @@ const {
   showVariables,
   variablesSnapshot,
   refreshVariables,
+  enableStepMode,
+  disableStepMode,
+  stepForward,
+  continueExecution,
 } = useInterpreter()
 
 const source = ref(loadSourceFromLocalStorage() || EXAMPLE_PROGRAMS['Hello World'])
@@ -82,7 +91,11 @@ onMounted(() => {
 })
 
 function handleRun() {
-  runProgram(source.value)
+  runProgram(source.value, false)
+}
+
+function handleStepRun() {
+  runProgram(source.value, true)
 }
 
 function handleStop() {
@@ -208,6 +221,14 @@ function stopDrag() {
   document.removeEventListener('mousemove', onDrag)
   document.removeEventListener('mouseup', stopDrag)
 }
+
+function handleVarClose() {
+  showVariables.value = false
+}
+
+function handleVarPosition(x: number, y: number) {
+  // could save position if needed
+}
 </script>
 
 <template>
@@ -248,82 +269,144 @@ function stopDrag() {
       <!-- Editor panel -->
       <div class="flex flex-col border-r border-[#333355]" :style="{ width: splitterPos + '%', minWidth: '200px' }">
         <!-- Toolbar -->
-        <div class="flex items-center gap-2 px-3 py-2 border-b border-[#333355] flex-wrap"
-          style="background-color: #0f0f2a">
-          <button @click="handleRun" :disabled="isRunning"
-            class="px-3 py-1.5 text-xs font-mono font-bold rounded transition-all hover:scale-105 disabled:opacity-50"
-            style="background-color: #1a5c1a; color: #33FF33; border: 1px solid #33FF33">
-            ▶ RUN
-          </button>
-          <button @click="handleStop" :disabled="!isRunning"
-            class="px-3 py-1.5 text-xs font-mono font-bold rounded transition-all hover:scale-105 disabled:opacity-50"
-            style="background-color: #5c1a1a; color: #FF5555; border: 1px solid #FF5555">
-            ■ STOP
-          </button>
-          <button @click="handleClear"
-            class="px-3 py-1.5 text-xs font-mono font-bold rounded transition-all hover:scale-105"
-            style="background-color: #1a1a5c; color: #5555FF; border: 1px solid #5555FF">
-            CLR
-          </button>
-          <button @click="handleNew"
-            class="px-3 py-1.5 text-xs font-mono font-bold rounded transition-all hover:scale-105"
-            style="background-color: #5c5c1a; color: #FFFF55; border: 1px solid #FFFF55">
-            NEW
-          </button>
-          <!-- Export / Import buttons -->
-          <button @click="exportProgram"
-            class="px-3 py-1.5 text-xs font-mono font-bold rounded transition-all hover:scale-105"
-            style="background-color: #1a5c5c; color: #55FFFF; border: 1px solid #55FFFF">
-            ⬇ EXP
-          </button>
-          <button @click="triggerImport"
-            class="px-3 py-1.5 text-xs font-mono font-bold rounded transition-all hover:scale-105"
-            style="background-color: #5c1a5c; color: #FF55FF; border: 1px solid #FF55FF">
-            ⬆ IMP
-          </button>
-          <!-- Variables inspector toggle -->
-          <button @click="showVariables = !showVariables"
-            class="px-3 py-1.5 text-xs font-mono font-bold rounded transition-all hover:scale-105"
-            :style="showVariables ? { backgroundColor: '#5c5c1a', color: '#FFFF55', border: '1px solid #FFFF55' } : { backgroundColor: '#1a1a5c', color: '#5555FF', border: '1px solid #5555FF' }">
-            {{ showVariables ? '▼ VARS' : '▶ VARS' }}
-          </button>
-          <span v-if="isRunning" class="text-xs font-mono text-[#33FF33] animate-pulse ml-2">
+        <div class="flex items-center gap-1.5 px-2 py-1.5 border-b border-[#333355] flex-wrap text-[11px]"
+          style="background-color: #0f0f2a; font-family: 'Courier New', monospace;">
+          
+          <!-- Groupe Exécution -->
+          <div class="flex items-center gap-0.5 pr-2 border-r border-[#333355]">
+            <button @click="handleRun" :disabled="isRunning || isStepping"
+              class="px-2 py-1 font-bold rounded transition-all hover:scale-105 disabled:opacity-40 disabled:hover:scale-100 text-[11px] leading-none"
+              style="background-color: #1a5c1a; color: #33FF33; border: 1px solid #33FF33"
+              title="Exécuter le programme">
+              ▶ RUN
+            </button>
+            <button @click="handleStepRun" :disabled="isRunning || isStepping"
+              class="px-2 py-1 font-bold rounded transition-all hover:scale-105 disabled:opacity-40 disabled:hover:scale-100 text-[11px] leading-none"
+              :style="isStepMode 
+                ? { backgroundColor: '#5c5c1a', color: '#FFFF55', border: '1px solid #FFFF55' } 
+                : { backgroundColor: '#1a3a5c', color: '#5599FF', border: '1px solid #5599FF' }"
+              title="Exécuter en mode pas à pas">
+              STEP
+            </button>
+            <button @click="handleStop" :disabled="!isRunning && !isStepping"
+              class="px-2 py-1 font-bold rounded transition-all hover:scale-105 disabled:opacity-40 disabled:hover:scale-100 text-[11px] leading-none"
+              style="background-color: #5c1a1a; color: #FF5555; border: 1px solid #FF5555"
+              title="Arrêter l'exécution">
+              ■ STOP
+            </button>
+          </div>
+
+          <!-- Groupe Pas à pas (visible uniquement en mode stepping) -->
+          <div v-if="isStepping" class="flex items-center gap-0.5 pr-2 border-r border-[#333355]">
+            <button @click="stepForward"
+              class="px-2 py-1 font-bold rounded transition-all hover:scale-105 text-[11px] leading-none"
+              style="background-color: #1a5c5c; color: #55FFFF; border: 1px solid #55FFFF"
+              title="Avancer d'une instruction">
+              ⏭ STEP+
+            </button>
+            <button @click="continueExecution"
+              class="px-2 py-1 font-bold rounded transition-all hover:scale-105 text-[11px] leading-none"
+              style="background-color: #2a5c2a; color: #66FF66; border: 1px solid #66FF66"
+              title="Continuer jusqu'à la fin">
+              ▶▶ CONT
+            </button>
+            <span class="text-[10px] font-mono text-[#55FFFF] ml-1">● L{{ currentLineNum }}</span>
+          </div>
+
+          <!-- Groupe Édition -->
+          <div class="flex items-center gap-0.5 pr-2 border-r border-[#333355]">
+            <button @click="handleClear"
+              class="px-2 py-1 font-bold rounded transition-all hover:scale-105 text-[11px] leading-none"
+              style="background-color: #1a1a5c; color: #5555FF; border: 1px solid #5555FF"
+              title="Effacer la console">
+              CLS
+            </button>
+            <button @click="handleNew"
+              class="px-2 py-1 font-bold rounded transition-all hover:scale-105 text-[11px] leading-none"
+              style="background-color: #5c5c1a; color: #FFFF55; border: 1px solid #FFFF55"
+              title="Nouveau programme">
+              NEW
+            </button>
+          </div>
+
+          <!-- Groupe Fichier -->
+          <div class="flex items-center gap-0.5 pr-2 border-r border-[#333355]">
+            <button @click="exportProgram"
+              class="px-2 py-1 font-bold rounded transition-all hover:scale-105 text-[11px] leading-none"
+              style="background-color: #1a4a4a; color: #55FFFF; border: 1px solid #55FFFF"
+              title="Exporter en .BAS">
+              ⬇ EXP
+            </button>
+            <button @click="triggerImport"
+              class="px-2 py-1 font-bold rounded transition-all hover:scale-105 text-[11px] leading-none"
+              style="background-color: #4a1a4a; color: #FF55FF; border: 1px solid #FF55FF"
+              title="Importer un fichier .BAS">
+              ⬆ IMP
+            </button>
+          </div>
+
+          <!-- Groupe Outils -->
+          <div class="flex items-center gap-0.5">
+            <button @click="showVariables = !showVariables"
+              class="px-2 py-1 font-bold rounded transition-all hover:scale-105 text-[11px] leading-none"
+              :style="showVariables 
+                ? { backgroundColor: '#5c5c1a', color: '#FFFF55', border: '1px solid #FFFF55' } 
+                : { backgroundColor: '#1a1a5c', color: '#5555FF', border: '1px solid #5555FF' }"
+              title="Afficher/Masquer les variables">
+              {{ showVariables ? '▼ VARS' : '▶ VARS' }}
+            </button>
+          </div>
+
+          <!-- Indicateur d'état -->
+          <span v-if="isRunning && !isStepping" class="text-[10px] font-mono text-[#33FF33] animate-pulse ml-auto">
             ● RUNNING
           </span>
         </div>
 
-        <!-- Variables inspector panel -->
-        <div v-if="showVariables" class="border-b border-[#333355] overflow-y-auto"
-          style="background-color: #080818; max-height: 200px">
-          <div class="px-3 py-2 text-xs font-mono text-gray-400 border-b border-[#222244]">
-            Variables Inspector
-            <button @click="refreshVariables" class="ml-2 text-[#55FF55] hover:underline">↻</button>
-            <span class="text-gray-600 ml-2">{{ variablesSnapshot.length }} vars</span>
-          </div>
-          <div v-if="variablesSnapshot.length === 0" class="px-3 py-2 text-[10px] font-mono text-gray-600 italic">
-            No variables (run a program first)
-          </div>
-          <div v-for="v in variablesSnapshot" :key="v.name"
-            class="px-3 py-1 flex items-center gap-2 hover:bg-[#0a0a2a] border-b border-[#111133]">
-            <span class="text-[10px] font-mono text-[#55FF55] font-bold">{{ v.name }}</span>
-            <span class="text-[10px] font-mono text-gray-300 truncate flex-1">{{ v.value }}</span>
-          </div>
-        </div>
-
-        <!-- Code Editor -->
+        <!-- Code Editor avec surbrillance de ligne -->
         <div class="flex-1 relative" style="background-color: #0a0a1a">
           <div class="absolute top-0 left-0 right-0 bottom-0 flex">
-            <!-- Line numbers -->
+            <!-- Line numbers with execution indicator -->
             <div
-              class="w-10 flex-shrink-0 py-2 px-1 text-right font-mono text-[10px] leading-[20px] select-none overflow-hidden"
+              class="w-10 flex-shrink-0 py-2 px-1 text-right font-mono text-[10px] leading-[20px] select-none overflow-hidden relative"
               style="color: #555577; background-color: #080818">
-              <div v-for="(_, i) in source.split('\n')" :key="i">{{ i + 1 }}</div>
+              <!-- Flèche d'exécution -->
+              <div v-if="currentPhysicalLine > 0"
+                class="absolute left-0 text-[11px] font-bold leading-[20px]"
+                :style="{
+                  top: ((currentPhysicalLine - 1) * 20) + 'px',
+                  color: isStepping ? '#55FFFF' : '#33FF33',
+                }">▸</div>
+              <div v-for="(_, i) in source.split('\n')" :key="i"
+                :style="currentPhysicalLine > 0 && (i + 1) === currentPhysicalLine ? { color: '#FFFF55', backgroundColor: '#33335555' } : {}">
+                {{ i + 1 }}
+              </div>
             </div>
-            <!-- Textarea -->
-            <textarea v-model="source"
-              class="flex-1 bg-transparent font-mono text-sm leading-[20px] p-2 resize-none outline-none"
-              :style="{ color: termColor(), caretColor: termColor(), tabSize: 4 }" spellcheck="false"
-              placeholder="Enter your GW-BASIC program here..." :disabled="isRunning" />
+            <!-- Textarea avec highlight de ligne courante -->
+            <div class="flex-1 relative">
+              <!-- Bande de surbrillance de la ligne en cours -->
+              <div v-if="currentPhysicalLine > 0"
+                class="absolute left-0 right-0 pointer-events-none z-10"
+                :style="{
+                  top: ((currentPhysicalLine - 1) * 20 + 8) + 'px',
+                  height: '20px',
+                  backgroundColor: isStepping ? 'rgba(85, 255, 255, 0.10)' : 'rgba(255, 255, 85, 0.08)',
+                  borderTop: '1px solid ' + (isStepping ? 'rgba(85, 255, 255, 0.20)' : 'rgba(255, 255, 85, 0.15)'),
+                  borderBottom: '1px solid ' + (isStepping ? 'rgba(85, 255, 255, 0.20)' : 'rgba(255, 255, 85, 0.15)'),
+                  boxShadow: isStepping ? 'inset 0 0 8px rgba(85, 255, 255, 0.08)' : 'none',
+                }">
+              </div>
+              <!-- Texte de l'instruction en cours dans la marge -->
+              <div v-if="currentPhysicalLine > 0"
+                class="absolute left-1 top-0 pointer-events-none z-20 text-[9px] font-mono font-bold leading-[20px]"
+                :style="{ color: isStepping ? '#55FFFF' : '#FFFF55', opacity: 0.7 }">
+                ⬤ EXEC
+              </div>
+              <textarea v-model="source"
+                class="absolute inset-0 bg-transparent font-mono text-sm leading-[20px] p-2 resize-none outline-none"
+                :style="{ color: termColor(), caretColor: termColor(), tabSize: 4 }" spellcheck="false"
+                placeholder="Enter your GW-BASIC program here..." :disabled="isRunning" />
+            </div>
           </div>
         </div>
       </div>
@@ -390,6 +473,31 @@ function stopDrag() {
 
     <!-- Hidden file input for import -->
     <input ref="fileInputRef" type="file" accept=".bas,.txt" class="hidden" @change="importProgram" />
+
+    <!-- Fenêtre flottante des variables -->
+    <FloatingWindow
+      title="Variables Inspector"
+      :visible="showVariables"
+      :width="360"
+      :height="300"
+      @close="handleVarClose"
+      @updatePosition="handleVarPosition">
+      <div class="text-[10px] text-gray-500 px-1 py-0.5 border-b border-[#222244] flex items-center gap-2">
+        <span>{{ variablesSnapshot.length }} variable(s)</span>
+        <button @click="refreshVariables" class="text-[#55FF55] hover:underline text-[9px]">↻ refresh</button>
+      </div>
+      <div v-if="variablesSnapshot.length === 0" class="px-2 py-3 text-[12px] font-mono text-gray-600 italic text-center">
+        No variables
+      </div>
+      <div v-for="v in variablesSnapshot" :key="v.name"
+        class="px-2 py-0.5 flex items-start gap-2 hover:bg-[#0a0a2a] border-b border-[#111133] text-[12px] leading-tight">
+        <span class="font-mono text-[#55FF55] font-bold whitespace-nowrap">{{ v.name }}</span>
+        <span class="font-mono text-gray-300 break-all min-w-0">{{ v.value }}</span>
+      </div>
+      <div v-if="isStepping" class="px-2 py-1 text-[9px] font-mono text-[#55FFFF] border-t border-[#222244]">
+        ● Stepping at line {{ currentLineNum }}
+      </div>
+    </FloatingWindow>
 
     <!-- Direct command bar -->
     <div class="flex items-center gap-2 px-4 py-2 border-t border-[#333355]" style="background-color: #0f0f2a">
