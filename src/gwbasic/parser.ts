@@ -136,7 +136,7 @@ export class Parser {
 
       case TokenType.CALL: stmt = this.parseCall(); break;
       case TokenType.DEF: stmt = this.parseDefFn(); break;
-      case TokenType.ERROR: stmt = this.parseOnError(); break;
+      case TokenType.ERROR: stmt = this.parseOn(); break;
       case TokenType.RESUME: stmt = this.parseResume(); break;
       case TokenType.RENUM: stmt = this.parseRenum(); break;
 
@@ -1078,6 +1078,26 @@ export class Parser {
 
   private parseOn(): Statement {
     this.advance(); // skip ON
+
+    // Check for ON ERROR GOTO/GOSUB
+    if (this.current().type === TokenType.ERROR) {
+      this.advance(); // skip ERROR
+      if (this.current().type === TokenType.GOTO) {
+        this.advance(); // skip GOTO
+        const targetLine = Math.floor(parseFloat(this.current().value));
+        this.advance();
+        return { type: 'OnError', targetLine, kind: 'GOTO' } as OnErrorStatement;
+      }
+      if (this.current().type === TokenType.GOSUB) {
+        this.advance(); // skip GOSUB
+        const targetLine = Math.floor(parseFloat(this.current().value));
+        this.advance();
+        return { type: 'OnError', targetLine, kind: 'GOSUB' } as OnErrorStatement;
+      }
+      this.skipToEol();
+      return { type: 'End' } as EndStatement;
+    }
+
     const expression = this.parseExpression();
 
     if (this.current().type === TokenType.GOTO) {
@@ -1187,18 +1207,14 @@ export class Parser {
     return { type: 'DefFn', fnName, paramName, expression } as DefFnStatement;
   }
 
-  private parseOnError(): Statement {
-    this.advance(); // skip ON
-    this.expect(TokenType.ERROR);
-    this.expect(TokenType.GOTO);
-    const targetLine = Math.floor(parseFloat(this.current().value));
-    this.advance();
-    return { type: 'OnError', targetLine } as OnErrorStatement;
-  }
-
   private parseResume(): Statement {
     this.advance(); // skip RESUME
-    return { type: 'Resume' } as ResumeStatement;
+    // Check for RESUME NEXT
+    if (this.current().type === TokenType.NEXT) {
+      this.advance();
+      return { type: 'Resume', resumeType: 'NEXT' } as ResumeStatement;
+    }
+    return { type: 'Resume', resumeType: 'RESUME' } as ResumeStatement;
   }
 
   private parseRenum(): Statement {

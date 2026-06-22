@@ -1625,19 +1625,31 @@ export class GWBasicInterpreter {
     this.errorHandlerLine = stmt.targetLine;
   }
 
-  private execResume(_stmt: ResumeStatement): void {
-    if (this.lastErrorLine !== null) {
-      // RESUME retourne à la ligne qui a causé l'erreur
+  private execResume(stmt: ResumeStatement): void {
+    if (this.lastErrorLine === null) {
+      throw new Error('RESUME without ON ERROR');
+    }
+    if (stmt.resumeType === 'NEXT') {
+      // RESUME NEXT: continue with statement after the error
       this.pc = this.findPcByLine(this.lastErrorLine);
       if (this.pc === -1) {
         throw new Error(`Undefined error line ${this.lastErrorLine}`);
       }
-      // Clear error handler
-      this.errorHandlerLine = null;
-      this.lastErrorLine = null;
+      this.pc++; // skip past the error line
+      // Skip to next line (after all statements on the error line)
+      const currentLine = this.lastErrorLine;
+      while (this.pc < this.flatProgram.length && (this.flatProgram[this.pc] as any).line === currentLine) {
+        this.pc++;
+      }
     } else {
-      throw new Error('RESUME without ON ERROR');
+      // RESUME: retry the line that caused the error
+      this.pc = this.findPcByLine(this.lastErrorLine);
+      if (this.pc === -1) {
+        throw new Error(`Undefined error line ${this.lastErrorLine}`);
+      }
     }
+    // Keep error handler active
+    this.lastErrorLine = null;
   }
 
   private execRenum(_stmt: RenumStatement): void {

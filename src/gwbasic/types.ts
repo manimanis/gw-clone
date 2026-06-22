@@ -357,11 +357,13 @@ export interface DefFnStatement extends ASTNode {
 export interface OnErrorStatement extends ASTNode {
   type: 'OnError';
   targetLine: number;
+  kind: 'GOTO' | 'GOSUB';
 }
 
 export interface ResumeStatement extends ASTNode {
   type: 'Resume';
   targetLine?: number;
+  resumeType: 'NEXT' | 'RESUME';
 }
 
 export interface RenumStatement extends ASTNode {

@@ -158,4 +158,20 @@ describe('New Features', () => {
     });
   });
 
+  describe('ON ERROR GOTO', () => {
+    it('should handle errors with ON ERROR GOTO and RESUME NEXT', async () => {
+      await interpreter.run(`
+10 ON ERROR GOTO 100
+20 X = 1 / 0
+30 PRINT "After error"
+40 END
+100 PRINT "Error caught"
+110 RESUME NEXT
+      `);
+      const printOutput = getOutput();
+      expect(printOutput).toContain('Error caught');
+      expect(printOutput).toContain('After error');
+    });
+  });
+
 });
