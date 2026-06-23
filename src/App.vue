@@ -41,7 +41,16 @@ const {
   disableStepMode,
   stepForward,
   continueExecution,
+  setBreakpoint,
+  removeBreakpoint,
+  toggleBreakpoint,
+  hasBreakpoint,
+  clearBreakpoints,
+  runUntilBreakpoint,
 } = useInterpreter()
+
+// Breakpoints state
+const breakpoints = ref<Set<number>>(new Set())
 
 const source = ref(loadSourceFromLocalStorage() || EXAMPLE_PROGRAMS['Hello World'])
 const selectedExample = ref('Hello World')
@@ -57,6 +66,14 @@ const isDragging = ref(false)
 
 // File input ref for import
 const fileInputRef = ref<HTMLInputElement | null>(null)
+
+// Step menu dropdown state
+const showStepMenu = ref(false)
+
+// Close step menu when clicking outside
+function closeStepMenu() {
+  showStepMenu.value = false
+}
 
 let saveTimeout: ReturnType<typeof setTimeout> | null = null
 watch(source, (val) => {
@@ -88,22 +105,70 @@ onMounted(() => {
       }
     }
   }
+  
+  // Close step menu when clicking outside the toolbar
+  document.addEventListener('click', (e) => {
+    const target = e.target as HTMLElement
+    // Check if click is inside the toolbar by traversing up
+    let isInsideToolbar = false
+    let parent: HTMLElement | null = target
+    while (parent) {
+      if (parent.hasAttribute('data-toolbar')) {
+        isInsideToolbar = true
+        break
+      }
+      parent = parent.parentElement
+    }
+    
+    if (!isInsideToolbar) {
+      showStepMenu.value = false
+    }
+  })
 })
 
 function handleRun() {
-  runProgram(source.value, false)
+  // Toggle: if running (normal or stepping), stop. Otherwise, run to completion.
+  if (isRunning.value || isStepping.value) {
+    stopProgram()
+  } else {
+    runProgram(source.value, false)
+  }
 }
 
-function handleStepRun() {
-  runProgram(source.value, true)
+function handleStepPlus() {
+  // Ne pas fermer le menu : l'utilisateur peut cliquer plusieurs fois
+  if (isStepping.value) {
+    // Already stepping: advance one instruction
+    stepForward()
+  } else if (!isRunning.value) {
+    // Idle: start program in step-by-step mode
+    runProgram(source.value, true)
+  }
 }
 
-function handleStop() {
-  stopProgram()
+function handleRunBP() {
+  if (isStepping.value) {
+    // Already stepping: run until breakpoint
+    runUntilBreakpoint()
+  } else if (!isRunning.value) {
+    // Idle: start program, then run until breakpoint
+    runProgram(source.value, true)
+    setTimeout(() => {
+      if (isStepping.value) {
+        runUntilBreakpoint()
+      }
+    }, 100)
+  }
 }
 
-function handleClear() {
-  clearOutput()
+function handleContinue() {
+  if (isStepping.value) {
+    // Already stepping: continue to end
+    continueExecution()
+  } else if (!isRunning.value) {
+    // Idle: run to completion
+    runProgram(source.value, false)
+  }
 }
 
 function handleNew() {
@@ -229,6 +294,26 @@ function handleVarClose() {
 function handleVarPosition(x: number, y: number) {
   // could save position if needed
 }
+
+function handleLineClick(lineNum: number) {
+  toggleBreakpoint(lineNum)
+  if (breakpoints.value.has(lineNum)) {
+    breakpoints.value.delete(lineNum)
+  } else {
+    breakpoints.value.add(lineNum)
+  }
+}
+
+function getLineNumber(lineIndex: number): number {
+  const lines = source.value.split('\n')
+  if (lineIndex < lines.length) {
+    const match = lines[lineIndex].match(/^\s*(\d+)/)
+    if (match) {
+      return parseInt(match[1])
+    }
+  }
+  return 0
+}
 </script>
 
 <template>
@@ -269,91 +354,80 @@ function handleVarPosition(x: number, y: number) {
       <!-- Editor panel -->
       <div class="flex flex-col border-r border-[#333355]" :style="{ width: splitterPos + '%', minWidth: '200px' }">
         <!-- Toolbar -->
-        <div class="flex items-center gap-1.5 px-2 py-1.5 border-b border-[#333355] flex-wrap text-[11px]"
+        <div data-toolbar class="flex items-center gap-1.5 px-2 py-1.5 border-b border-[#333355] flex-wrap text-[11px]"
           style="background-color: #0f0f2a; font-family: 'Courier New', monospace;">
           
           <!-- Groupe Exécution -->
           <div class="flex items-center gap-0.5 pr-2 border-r border-[#333355]">
-            <button @click="handleRun" :disabled="isRunning || isStepping"
-              class="px-2 py-1 font-bold rounded transition-all hover:scale-105 disabled:opacity-40 disabled:hover:scale-100 text-[11px] leading-none"
-              style="background-color: #1a5c1a; color: #33FF33; border: 1px solid #33FF33"
-              title="Exécuter le programme">
-              ▶ RUN
+            <!-- RUN / STOP toggle button -->
+            <button @click="handleRun"
+              class="w-8 h-8 flex items-center justify-center font-bold rounded transition-all hover:scale-105 text-[14px] leading-none"
+              :style="(isRunning || isStepping)
+                ? { backgroundColor: '#5c1a1a', color: '#FF5555', border: '1px solid #FF5555' }
+                : { backgroundColor: '#1a5c1a', color: '#33FF33', border: '1px solid #33FF33' }"
+              :title="(isRunning || isStepping) ? 'Arrêter l\'exécution' : 'Exécuter le programme'">
+              {{ (isRunning || isStepping) ? '■' : '▶' }}
             </button>
-            <button @click="handleStepRun" :disabled="isRunning || isStepping"
-              class="px-2 py-1 font-bold rounded transition-all hover:scale-105 disabled:opacity-40 disabled:hover:scale-100 text-[11px] leading-none"
-              :style="isStepMode 
-                ? { backgroundColor: '#5c5c1a', color: '#FFFF55', border: '1px solid #FFFF55' } 
-                : { backgroundColor: '#1a3a5c', color: '#5599FF', border: '1px solid #5599FF' }"
-              title="Exécuter en mode pas à pas">
-              STEP
+            <!-- STEP button (shows dropdown) -->
+            <button @click="showStepMenu = !showStepMenu"
+              class="w-8 h-8 flex items-center justify-center font-bold rounded transition-all hover:scale-105 text-[14px] leading-none"
+              :style="{
+                backgroundColor: '#1a3a5c',
+                color: '#5599FF',
+                border: '1px solid #5599FF'
+              }"
+              title="Options d'exécution pas à pas"
+              data-step-button>
+              ⏭
             </button>
-            <button @click="handleStop" :disabled="!isRunning && !isStepping"
-              class="px-2 py-1 font-bold rounded transition-all hover:scale-105 disabled:opacity-40 disabled:hover:scale-100 text-[11px] leading-none"
-              style="background-color: #5c1a1a; color: #FF5555; border: 1px solid #FF5555"
-              title="Arrêter l'exécution">
-              ■ STOP
-            </button>
-          </div>
-
-          <!-- Groupe Pas à pas (visible uniquement en mode stepping) -->
-          <div v-if="isStepping" class="flex items-center gap-0.5 pr-2 border-r border-[#333355]">
-            <button @click="stepForward"
-              class="px-2 py-1 font-bold rounded transition-all hover:scale-105 text-[11px] leading-none"
-              style="background-color: #1a5c5c; color: #55FFFF; border: 1px solid #55FFFF"
-              title="Avancer d'une instruction">
-              ⏭ STEP+
-            </button>
-            <button @click="continueExecution"
-              class="px-2 py-1 font-bold rounded transition-all hover:scale-105 text-[11px] leading-none"
-              style="background-color: #2a5c2a; color: #66FF66; border: 1px solid #66FF66"
-              title="Continuer jusqu'à la fin">
-              ▶▶ CONT
-            </button>
-            <span class="text-[10px] font-mono text-[#55FFFF] ml-1">● L{{ currentLineNum }}</span>
-          </div>
-
-          <!-- Groupe Édition -->
-          <div class="flex items-center gap-0.5 pr-2 border-r border-[#333355]">
-            <button @click="handleClear"
-              class="px-2 py-1 font-bold rounded transition-all hover:scale-105 text-[11px] leading-none"
-              style="background-color: #1a1a5c; color: #5555FF; border: 1px solid #5555FF"
-              title="Effacer la console">
-              CLS
-            </button>
-            <button @click="handleNew"
-              class="px-2 py-1 font-bold rounded transition-all hover:scale-105 text-[11px] leading-none"
-              style="background-color: #5c5c1a; color: #FFFF55; border: 1px solid #FFFF55"
-              title="Nouveau programme">
-              NEW
-            </button>
+            <!-- Step dropdown menu -->
+            <div v-if="showStepMenu" class="flex items-center gap-0.5 pl-1" data-step-menu>
+              <button @click="handleStepPlus"
+                class="w-7 h-7 flex items-center justify-center font-bold rounded transition-all hover:scale-105 text-[12px] leading-none"
+                style="background-color: #1a3a5c; color: #5599FF; border: 1px solid #5599FF"
+                title="Exécution instruction par instruction">
+                ▶+
+              </button>
+              <button @click="handleRunBP"
+                class="w-7 h-7 flex items-center justify-center font-bold rounded transition-all hover:scale-105 text-[12px] leading-none"
+                style="background-color: #2a5c2a; color: #66FF66; border: 1px solid #66FF66"
+                title="Exécution jusqu'au prochain point d'arrêt">
+                ⏩
+              </button>
+              <button @click="handleContinue"
+                class="w-7 h-7 flex items-center justify-center font-bold rounded transition-all hover:scale-105 text-[12px] leading-none"
+                style="background-color: #2a5c2a; color: #66FF66; border: 1px solid #66FF66"
+                title="Exécution jusqu'à la fin">
+                ▶▶
+              </button>
+            </div>
           </div>
 
           <!-- Groupe Fichier -->
           <div class="flex items-center gap-0.5 pr-2 border-r border-[#333355]">
             <button @click="exportProgram"
-              class="px-2 py-1 font-bold rounded transition-all hover:scale-105 text-[11px] leading-none"
+              class="w-8 h-8 flex items-center justify-center font-bold rounded transition-all hover:scale-105 text-[14px] leading-none"
               style="background-color: #1a4a4a; color: #55FFFF; border: 1px solid #55FFFF"
               title="Exporter en .BAS">
-              ⬇ EXP
+              ⬇
             </button>
             <button @click="triggerImport"
-              class="px-2 py-1 font-bold rounded transition-all hover:scale-105 text-[11px] leading-none"
+              class="w-8 h-8 flex items-center justify-center font-bold rounded transition-all hover:scale-105 text-[14px] leading-none"
               style="background-color: #4a1a4a; color: #FF55FF; border: 1px solid #FF55FF"
               title="Importer un fichier .BAS">
-              ⬆ IMP
+              ⬆
             </button>
           </div>
 
           <!-- Groupe Outils -->
           <div class="flex items-center gap-0.5">
             <button @click="showVariables = !showVariables"
-              class="px-2 py-1 font-bold rounded transition-all hover:scale-105 text-[11px] leading-none"
-              :style="showVariables 
-                ? { backgroundColor: '#5c5c1a', color: '#FFFF55', border: '1px solid #FFFF55' } 
+              class="w-8 h-8 flex items-center justify-center font-bold rounded transition-all hover:scale-105 text-[14px] leading-none"
+              :style="showVariables
+                ? { backgroundColor: '#5c5c1a', color: '#FFFF55', border: '1px solid #FFFF55' }
                 : { backgroundColor: '#1a1a5c', color: '#5555FF', border: '1px solid #5555FF' }"
               title="Afficher/Masquer les variables">
-              {{ showVariables ? '▼ VARS' : '▶ VARS' }}
+              📋
             </button>
           </div>
 
@@ -361,12 +435,15 @@ function handleVarPosition(x: number, y: number) {
           <span v-if="isRunning && !isStepping" class="text-[10px] font-mono text-[#33FF33] animate-pulse ml-auto">
             ● RUNNING
           </span>
+          <span v-if="isStepping" class="text-[10px] font-mono text-[#55FFFF] ml-auto">
+            ● STEP L{{ currentLineNum }}
+          </span>
         </div>
 
         <!-- Code Editor avec surbrillance de ligne -->
         <div class="flex-1 relative" style="background-color: #0a0a1a">
           <div class="absolute top-0 left-0 right-0 bottom-0 flex">
-            <!-- Line numbers with execution indicator -->
+            <!-- Line numbers with execution indicator and breakpoints -->
             <div
               class="w-10 flex-shrink-0 py-2 px-1 text-right font-mono text-[10px] leading-[20px] select-none overflow-hidden relative"
               style="color: #555577; background-color: #080818">
@@ -378,7 +455,12 @@ function handleVarPosition(x: number, y: number) {
                   color: isStepping ? '#55FFFF' : '#33FF33',
                 }">▸</div>
               <div v-for="(_, i) in source.split('\n')" :key="i"
+                @click="handleLineClick(getLineNumber(i))"
+                class="relative cursor-pointer hover:bg-[#333355] transition-colors"
                 :style="currentPhysicalLine > 0 && (i + 1) === currentPhysicalLine ? { color: '#FFFF55', backgroundColor: '#33335555' } : {}">
+                <!-- Breakpoint indicator -->
+                <span v-if="hasBreakpoint(getLineNumber(i))" 
+                  class="absolute left-0.5 top-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-red-500"></span>
                 {{ i + 1 }}
               </div>
             </div>
@@ -405,7 +487,7 @@ function handleVarPosition(x: number, y: number) {
               <textarea v-model="source"
                 class="absolute inset-0 bg-transparent font-mono text-sm leading-[20px] p-2 resize-none outline-none"
                 :style="{ color: termColor(), caretColor: termColor(), tabSize: 4 }" spellcheck="false"
-                placeholder="Enter your GW-BASIC program here..." :disabled="isRunning" />
+                placeholder="Enter your GW-BASIC program here..." :disabled="isRunning || isStepping" />
             </div>
           </div>
         </div>
@@ -505,7 +587,7 @@ function handleVarPosition(x: number, y: number) {
       <input v-model="directCmd" type="text"
         class="flex-1 bg-[#0a0a1a] text-sm font-mono px-3 py-1.5 border border-[#333355] rounded outline-none focus:border-[#33FF33] min-w-0"
         :style="{ color: termColor() }" placeholder="Enter direct command (RUN, LIST, NEW, CLS, or BASIC statements)..."
-        :disabled="isRunning || inputMode" @keydown="handleDirectCmd" />
+        :disabled="isRunning || inputMode || isStepping" @keydown="handleDirectCmd" />
       <span v-if="cmdHistory.length > 0" class="text-[10px] font-mono text-gray-600 hidden sm:inline">
         {{ cmdHistory.length }} cmds
       </span>

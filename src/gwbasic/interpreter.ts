@@ -57,6 +57,11 @@ export class GWBasicInterpreter {
   private stepCallback: StepCallback | null = null;
   private physicalLineNum: number = 0;
 
+  // Breakpoint support
+  private breakpoints: Set<number> = new Set();
+  private runToBreakpoint: boolean = false;
+  private skipNextBreakpointCheck: boolean = false;
+
   private outputCallback: OutputCallback;
   private inputCallback: InputCallback;
 
@@ -304,6 +309,9 @@ export class GWBasicInterpreter {
 
         // In step mode, pause after each statement
         await this.stepPause();
+        
+        // Check for breakpoint
+        await this.checkBreakpoint();
       } catch (e: unknown) {
         const err = e as Error;
         // Check if there's an error handler
@@ -1892,6 +1900,60 @@ export class GWBasicInterpreter {
       return new Promise<void>((resolve) => {
         this.stepResolve = resolve;
       });
+    }
+  }
+
+  // === BREAKPOINT SUPPORT ===
+
+  setBreakpoint(lineNum: number): void {
+    this.breakpoints.add(lineNum);
+  }
+
+  removeBreakpoint(lineNum: number): void {
+    this.breakpoints.delete(lineNum);
+  }
+
+  toggleBreakpoint(lineNum: number): void {
+    if (this.breakpoints.has(lineNum)) {
+      this.breakpoints.delete(lineNum);
+    } else {
+      this.breakpoints.add(lineNum);
+    }
+  }
+
+  hasBreakpoint(lineNum: number): boolean {
+    return this.breakpoints.has(lineNum);
+  }
+
+  clearBreakpoints(): void {
+    this.breakpoints.clear();
+  }
+
+  setRunToBreakpoint(enable: boolean): void {
+    this.runToBreakpoint = enable;
+    if (enable) {
+      this.skipNextBreakpointCheck = true;
+    }
+  }
+
+  /** Check if current line has a breakpoint and pause if needed */
+  private async checkBreakpoint(): Promise<void> {
+    // Skip the first check after activating runToBreakpoint to avoid
+    // immediately re-pausing on the same line we were already on
+    if (this.skipNextBreakpointCheck) {
+      this.skipNextBreakpointCheck = false;
+      return;
+    }
+    if (this.runToBreakpoint && this.breakpoints.has(this.currentLineNum)) {
+      this.runToBreakpoint = false;
+      this.skipNextBreakpointCheck = false;
+      this.stepMode = true; // Enable step mode to pause at breakpoint
+      if (this.stepCallback) {
+        this.stepCallback(this.currentLineNum);
+        return new Promise<void>((resolve) => {
+          this.stepResolve = resolve;
+        });
+      }
     }
   }
 }

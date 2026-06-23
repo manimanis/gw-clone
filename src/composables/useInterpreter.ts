@@ -652,6 +652,36 @@ export function useInterpreter() {
     }
   }
 
+  // Breakpoint functions
+  function setBreakpoint(lineNum: number) {
+    interpreterRef.value?.setBreakpoint(lineNum)
+  }
+
+  function removeBreakpoint(lineNum: number) {
+    interpreterRef.value?.removeBreakpoint(lineNum)
+  }
+
+  function toggleBreakpoint(lineNum: number) {
+    interpreterRef.value?.toggleBreakpoint(lineNum)
+  }
+
+  function hasBreakpoint(lineNum: number) {
+    return interpreterRef.value?.hasBreakpoint(lineNum) || false
+  }
+
+  function clearBreakpoints() {
+    interpreterRef.value?.clearBreakpoints()
+  }
+
+  function runUntilBreakpoint() {
+    if (interpreterRef.value && isStepping.value) {
+      isStepping.value = false
+      interpreterRef.value.setStepMode(false)
+      interpreterRef.value.setRunToBreakpoint(true)
+      interpreterRef.value.stepForward()
+    }
+  }
+
   async function runProgram(source: string, stepMode: boolean = false) {
     if (isRunning.value) return
     isRunning.value = true
@@ -809,5 +839,12 @@ export function useInterpreter() {
     disableStepMode,
     stepForward,
     continueExecution,
+    // Breakpoints
+    setBreakpoint,
+    removeBreakpoint,
+    toggleBreakpoint,
+    hasBreakpoint,
+    clearBreakpoints,
+    runUntilBreakpoint,
   }
 }
